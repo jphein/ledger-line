@@ -167,7 +167,7 @@ def test_unicode_escape_same_value():
 
 @L("R-50", "S-06")
 def test_replay_after_request_cancelled_returns_original():
-    w = pf.world()
+    w = pf.world(pf.fixture(requests=[]))
     k = pf.new_key()
     q = ok(w.bob.ask("ada", 10, key=k), 201)
     ok(w.bob.post(f"/requests/{q['request_id']}/cancel", {}))

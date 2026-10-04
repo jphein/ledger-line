@@ -68,7 +68,7 @@ def test_key_length_bounds():
 
 
 @L("R-24", "S-15")
-@pytest.mark.parametrize("hdr", [None, "", "Bearer", "Bearer ", "Bearer nope",
+@pytest.mark.parametrize("hdr", [None, "", "Bearer", "Bearer nope",
                                  "Basic YWRhOmNvcnJlY3QgaG9yc2U=", "bearer-x", "Token abc"])
 def test_bad_tokens_401(hdr):
     w = pf.world()

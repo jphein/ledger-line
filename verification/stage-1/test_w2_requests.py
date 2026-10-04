@@ -30,7 +30,7 @@ def test_request_amount_422(amount):
 
 @L("R-64")
 def test_request_errors():
-    w = pf.world()
+    w = pf.world(pf.fixture(requests=[]))
     ok(w.bob.ask("ada", 1_000_000_000), 201)
     ok(w.bob.ask("ada", 1), 201)
     err(w.bob.ask("bob", 10), 422, "self_request")
@@ -247,7 +247,7 @@ def test_list_filters():
 
     def ids(q):
         return {x["request_id"] for x in w.ada.requests(q)}
-    every = {out_p, in_p, in_d, out_c, in_paid}
+    every = [out_p, in_p, in_d, out_c, in_paid]
     every_ids = {x["request_id"] for x in every} | {"rq_1", "rq_2"}
     assert ids("") == every_ids
     assert ids("direction=outgoing") == {out_p["request_id"], out_c["request_id"], "rq_2"}

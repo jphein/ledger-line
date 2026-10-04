@@ -190,9 +190,9 @@ def test_idempotency_records_survive_import():
 def test_failed_key_reusable_after_import():
     w = busy_world()
     k = pf.new_key()
-    err(w.dee.pay("ada", 10**8, key=k), 409, "insufficient_funds")
+    err(w.bob.pay("ada", 10**8, key=k), 409, "insufficient_funds")
     do_import(export())
-    ok(w.dee.pay("ada", 1, key=k), 201)
+    ok(w.bob.pay("ada", 1, key=k), 201)
 
 
 @L("R-89")

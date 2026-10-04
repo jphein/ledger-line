@@ -57,7 +57,8 @@ def test_single_transfer_defaults_and_shape():
 
 @L("R-93", "R-98")
 def test_32_transfers_in_input_order():
-    w = sw()
+    dee = dict(pf.DEE, balance=1000)
+    w = pf.world(pf.fixture(users=[pf.ADA, pf.BOB, pf.CY, dee, pf.OP], operators=["u_op"]))
     hs = ["ada", "bob", "cy", "dee"]
     transfers = [t(hs[i % 4], hs[(i + 1) % 4], i + 1, note=f"n{i}") for i in range(32)]
     r = ok(settle(w.op, transfers), 201)
