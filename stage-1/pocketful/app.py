@@ -7,7 +7,7 @@ import re
 import sys
 import traceback
 
-from . import auth, fixture, money_requests, payments
+from . import auth, fixture, money_requests, payments, settlements, snapshot, splits
 from .errors import ApiError, not_found
 from .jsonio import parse_body
 
@@ -36,6 +36,15 @@ def _reset(store, req, token):
     return 204, None
 
 
+def _export(store, req, token):
+    return 200, snapshot.export_state(store)
+
+
+def _import(store, req, token):
+    snapshot.import_state(store, req.json())
+    return 204, None
+
+
 def _signup(store, req, token):
     return auth.signup(store, req.json())
 
@@ -54,6 +63,8 @@ PUBLIC, AUTHED = False, True
 ROUTES = [
     ("GET", r"/health", _health, PUBLIC),
     ("POST", r"/_test/reset", _reset, PUBLIC),
+    ("GET", r"/_test/export", _export, PUBLIC),
+    ("POST", r"/_test/import", _import, PUBLIC),
     ("POST", r"/auth/signup", _signup, PUBLIC),
     ("POST", r"/auth/login", _login, PUBLIC),
     ("GET", r"/me", _me, AUTHED),
@@ -64,6 +75,8 @@ ROUTES = [
     ("POST", r"/requests/([^/]+)/pay", money_requests.pay, AUTHED),
     ("POST", r"/requests/([^/]+)/decline", money_requests.decline, AUTHED),
     ("POST", r"/requests/([^/]+)/cancel", money_requests.cancel, AUTHED),
+    ("POST", r"/splits", splits.create, AUTHED),
+    ("POST", r"/settlements", settlements.create, AUTHED),
 ]
 
 
