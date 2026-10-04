@@ -38,7 +38,7 @@ def violation(line: str, detail: str) -> None:
 
 
 _NOTSET = object()
-_shared = httpx.Client(timeout=30.0, limits=httpx.Limits(max_connections=100,
+_shared = httpx.Client(timeout=30.0, trust_env=False, limits=httpx.Limits(max_connections=100,
                                                         max_keepalive_connections=100,
                                                         keepalive_expiry=5.0))
 
@@ -310,7 +310,7 @@ def storm(calls, width: int = 50):
     results = [None] * len(calls)
 
     def run(i):
-        client = httpx.Client(timeout=30.0)
+        client = httpx.Client(timeout=30.0, trust_env=False)
         try:
             if i < width:
                 barrier.wait(timeout=30)
