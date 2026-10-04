@@ -7,11 +7,12 @@ Quoted words come from the spec. Item tags: `[W1]` runtime/reset/auth/me/errors,
 ## Requirements
 
 ### Delivery and runtime (§2, §3) [W1]
+- R-00 "Source code, API documentation and schemas from existing products in this domain must not be used."
 - R-01 Deliver "an HTTP service, a `Dockerfile` and a `RUN.md` with a command that builds and starts the service without manual setup", all inside `stage-1/`.
 - R-02 "The image must run on its own with `-e PORT=<port>` and a port mapping." No outbound network at run time; every runtime dependency is in the image.
 - R-03 "Listen on `0.0.0.0` using the `PORT` environment variable, default `8080`."
 - R-04 `GET /health -> 200 {"status": "ok"}` within 60 s of container start (2 vCPU, 2 GiB).
-- R-05 Up to 50 requests in flight; each answered within 5 s (10 s for `POST /_test/reset`).
+- R-05 Up to 50 requests in flight; each answered within 5 s (10 s for `POST /_test/reset`, `GET /_test/export` and `POST /_test/import`: "Test control calls have a 10-second timeout.").
 - R-06 `POST /_test/reset` with a fixture body -> `204 No Content`; "Replace all service state with the fixture". "When reset returns 204, subsequent requests must see only that fixture. Repeated resets are supported." No authentication.
 - R-07 Requests and responses are `application/json; charset=utf-8`.
 - R-08 "Timestamps in responses are RFC 3339 with an explicit offset."
@@ -52,7 +53,7 @@ Quoted words come from the spec. Item tags: `[W1]` runtime/reset/auth/me/errors,
 - R-37 "The handle derived from the email (§4) is already taken" -> 409 `handle_taken`, "and no account is created".
 - R-38 Every other endpoint requires `Authorization: Bearer <token>` except `/health`, `/_test/reset`, `/_test/export`, `/_test/import`, signup, login.
 - R-39 "Tokens do not expire. An account may have multiple valid tokens and concurrent sessions." (each login issues a new token; old ones stay valid)
-- R-40 Passwords stored with scrypt (or equivalent); "Plaintext password storage is not permitted." (export must not reveal plaintext)
+- R-40 Passwords stored with scrypt (or equivalent); "Plaintext password storage is not permitted." (Our choice, stricter than §10 which allows credentials in exports: exports carry only hashes, so fixture passwords are hashed at reset — see S-02.)
 
 ### Idempotency (§7) [W2; W3 applies it to splits and settlements]
 - R-41 Five paths require a key: `POST /payments`, `POST /requests`, `POST /requests/{id}/pay`, `POST /splits`, `POST /settlements`.
@@ -62,7 +63,7 @@ Quoted words come from the spec. Item tags: `[W1]` runtime/reset/auth/me/errors,
 - R-45 Replay -> **200**, "body identical to the original response as a JSON value".
 - R-46 Same key, different body -> 409 `idempotency_key_reuse`.
 - R-47 "Key reused after the original request failed with 4xx" -> treated as first use.
-- R-48 "Same body" = same JSON value after parsing; key order and whitespace do not matter (and `1000` vs `1e3`? -> compare parsed JSON values; `1000` and `1000.0` parse to equal numbers in Python and count as the same value).
+- R-48 "Same body" = same JSON value after parsing; "key order and whitespace do not matter". (Comparison rule: D-11.)
 - R-49 "For concurrent identical requests with an unused key, exactly one returns 201. The others return 200 with the same body. The operation takes effect only once."
 - R-50 "A successful replay returns the original response, even after the resource changes or is cancelled. It makes no further state changes."
 - R-51 "After the body has parsed as a JSON object and the caller is authenticated, an already claimed key is resolved before endpoint field validation or current-resource checks." (successful key + now-invalid body -> 409 `idempotency_key_reuse`)
@@ -105,7 +106,7 @@ Quoted words come from the spec. Item tags: `[W1]` runtime/reset/auth/me/errors,
 
 ### Export / import (§10) [W3]
 - R-84 `GET /_test/export` (unauthenticated) -> 200 `{"track":"pocketful","format_version":1,"state":{...}}`.
-- R-85 `POST /_test/import` with that entire object -> 204, atomically replaces all state; accepts an unchanged export of this service; no dependency on source process/files/port.
+- R-85 `POST /_test/import` with that entire object -> 204, atomically replaces all state; accepts an unchanged export of this service; "No dependency on the source process, files, volume, port or network address is allowed."
 - R-86 Import is replacement, not merge; repeating it restores the state without duplicating anything.
 - R-87 Invalid JSON -> 400 `malformed_request`; missing fields, wrong `track`/`format_version`, or invalid state -> 422 `validation_failed` "without changing the destination".
 - R-88 Export "is an atomic, read-only snapshot; subsequent source writes do not change it."
@@ -119,7 +120,7 @@ Quoted words come from the spec. Item tags: `[W1]` runtime/reset/auth/me/errors,
 - R-94 Unknown handle -> 404; self-transfer -> 422 `self_payment`; malformed batch shape (transfers missing / not an array / 0 or >32 entries / entry not an object) -> 422 `validation_failed`. Unknown fields ignored.
 - R-95 "Entry errors take precedence in input order, before insufficient funds."
 - R-96 Affordable when every wallet's balance after all incoming and outgoing transfers is nonnegative (net, not sequential); else 409 `insufficient_funds`.
-- R-97 All movements commit together or none do; failed validation claims no key and creates no payment.
+- R-97 All movements commit together or none do; "failed validation claims no idempotency key and creates no payment or revision."
 - R-98 201 `{settlement_id, committed_at, payments:[...]}` in input order; each member is an ordinary payment with `settlement_id`; `request_id` null; every member's `created_at` == `committed_at`.
 - R-99 Non-member payments expose `settlement_id: null` (every payment body carries the field).
 - R-100 Members follow ordinary feed visibility; operator status grants no access to others' requests or private activity.
@@ -154,6 +155,12 @@ Quoted words come from the spec. Item tags: `[W1]` runtime/reset/auth/me/errors,
 - S-16 Responses carry `Content-Type: application/json; charset=utf-8`; 204 has no body.
 - S-17 Import of invalid state leaves destination intact (tokens still work).
 - S-18 Settlement net affordability: A->B 100 and B->C 100 with B at 0 is affordable.
+- S-19 Signup precedence: an already-registered email gives 409 `email_taken`, not `handle_taken`; check email before handle. `Ada@x.com` after `ada@x.com` -> 409 `handle_taken` (D-07).
+- S-20 Non-JSON constants `NaN`, `Infinity`, `-Infinity` -> 400 `malformed_request`; `1e400` (inf) amount -> 422, never 5xx; integer literal over 4300 digits -> 400, never 5xx.
+- S-21 Lone surrogate in a note (`"\ud800"`) must never 5xx: response encoder falls back to `ensure_ascii` (same JSON value) — D-12.
+- S-22 Reset and import bodies must be JSON objects; non-object or unparseable -> 400; parses but malformed fixture (missing `users`, non-integer balance, bad handle, duplicate id/handle/email, payment/request referencing unknown user) -> 422 `validation_failed`, change nothing.
+- S-23 Large-fixture reset (1000 users) completes under 10 s (target < 6 s) on 2 vCPU.
+- S-24 Split with 1000 unknown participant handles -> 404/422 promptly, never 5xx or timeout.
 
 ## Boundary (out of scope for stage 1)
 - Stage 2 anything. Deposits, top-ups, withdrawals, cards, bank integrations.
@@ -170,3 +177,14 @@ Quoted words come from the spec. Item tags: `[W1]` runtime/reset/auth/me/errors,
 - D-07 Emails compared case-sensitively as given, after no transformation, for uniqueness and login (spec states no folding).
 - D-08 Settlement entry check order per entry: amount/note/visibility/types -> unknown handle 404 -> self 422 `self_payment`; first failing entry in input order wins.
 - D-09 Wrong method on a known path -> 404 `not_found` with error body (never 5xx).
+- D-10 Idempotency records are keyed by (user, method, path, key): the same key on `/requests/rq_1/pay` and `/requests/rq_2/pay` is independent (R-43).
+- D-11 Body comparison for replay is type-aware: a bool never equals a number; an int equals an integral float (`1000` == `1000.0`); key order and whitespace ignored.
+- D-12 Response encoding: UTF-8; if encoding fails (lone surrogate), fall back to `ensure_ascii=True` (same JSON value). Notes are not rejected for surrogates.
+- D-13 scrypt parameters chosen so a 1000-user reset finishes < 6 s on 2 vCPU (likely n=2^11..2^12, r=8, p=1); same parameters for signup; hashing outside the global lock, and signup re-checks email and handle inside the lock.
+- D-14 Fixture payments/requests get `created_at` = reset time, plus a monotonic sequence number for deterministic newest-first ordering; ties broken by sequence descending.
+- D-15 Decline and cancel ignore the request body entirely (absent, empty or anything). Pay with an absent/empty body is treated as `{}` (so it is the same body as `{}` for replays); a non-empty body that does not parse is 400.
+- D-16 Third-party pay/decline/cancel gives 403 (D-05) chosen over §5's 404 "not visible to this caller" because the endpoint tables say "Not the payer is 403".
+- D-17 Settlement entry fields of the wrong JSON type (e.g. numeric `from_handle`) follow D-03 (400); only amount/note/visibility give 422; batch shape gives 422 per §11.
+
+## Decision log (changes)
+- 15:45 Auditor challenge merged: R-00 added; R-05, R-85, R-97 restored to spec wording; R-48 decision moved to D-11; R-40 marked as our choice; S-19..S-24 and D-10..D-17 added (builder points 1-7 merged as D-11..D-15).
