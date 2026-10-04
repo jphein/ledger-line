@@ -7,7 +7,7 @@ import re
 import sys
 import traceback
 
-from . import auth, fixture
+from . import auth, fixture, money_requests, payments
 from .errors import ApiError, not_found
 from .jsonio import parse_body
 
@@ -57,11 +57,14 @@ ROUTES = [
     ("POST", r"/auth/signup", _signup, PUBLIC),
     ("POST", r"/auth/login", _login, PUBLIC),
     ("GET", r"/me", _me, AUTHED),
+    ("POST", r"/payments", payments.create, AUTHED),
+    ("GET", r"/activity", payments.activity, AUTHED),
+    ("POST", r"/requests", money_requests.create, AUTHED),
+    ("GET", r"/requests", money_requests.list_requests, AUTHED),
+    ("POST", r"/requests/([^/]+)/pay", money_requests.pay, AUTHED),
+    ("POST", r"/requests/([^/]+)/decline", money_requests.decline, AUTHED),
+    ("POST", r"/requests/([^/]+)/cancel", money_requests.cancel, AUTHED),
 ]
-
-
-def add_routes(routes):
-    ROUTES.extend(routes)
 
 
 def _match(method, path):
