@@ -19,6 +19,7 @@ class Server(ThreadingHTTPServer):
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "pocketful"
+    timeout = 10  # a stalled client cannot pin a worker thread forever
     store = None  # set by make_server
 
     def _handle(self):
@@ -26,20 +27,50 @@ class Handler(BaseHTTPRequestHandler):
         query = {}
         for name, value in parse_qsl(split.query, keep_blank_values=True):
             query.setdefault(name, value)
-        length = self.headers.get("Content-Length")
         try:
-            length = int(length) if length else 0
-        except ValueError:
-            length = 0
-        if length < 0 or length > MAX_BODY:
-            status, body = 400, {"error": {"code": "malformed_request",
-                                           "message": "bad Content-Length"}}
+            raw = self._read_body()
+        except ValueError as err:
             self.close_connection = True
-        else:
-            raw = self.rfile.read(length) if length else b""
-            req = Request(self.command, unquote(split.path), query, self.headers, raw)
-            status, body = dispatch(self.store, req)
-        self._send(status, body)
+            self._send(400, {"error": {"code": "malformed_request", "message": str(err)}})
+            return
+        req = Request(self.command, unquote(split.path), query, self.headers, raw)
+        self._send(*dispatch(self.store, req))
+
+    def _read_body(self):
+        """Read a Content-Length or chunked body; ValueError when it cannot be framed."""
+        encoding = (self.headers.get("Transfer-Encoding") or "").strip().lower()
+        if encoding == "chunked":
+            return self._read_chunked()
+        if encoding and encoding != "identity":
+            raise ValueError("unsupported Transfer-Encoding")
+        length = self.headers.get("Content-Length")
+        if not length:
+            return b""
+        if not length.strip().isdigit() or int(length) > MAX_BODY:
+            raise ValueError("bad Content-Length")
+        raw = self.rfile.read(int(length))
+        if len(raw) != int(length):
+            raise ValueError("body shorter than Content-Length")
+        return raw
+
+    def _read_chunked(self):
+        body = bytearray()
+        while True:
+            size_line = self.rfile.readline(1024).split(b";", 1)[0].strip()
+            try:
+                size = int(size_line, 16)
+            except ValueError:
+                raise ValueError("bad chunk size")
+            if size < 0 or len(body) + size > MAX_BODY:
+                raise ValueError("chunked body too large")
+            if size == 0:
+                while self.rfile.readline(1024).strip():  # trailers
+                    pass
+                return bytes(body)
+            chunk = self.rfile.read(size)
+            if len(chunk) != size or self.rfile.read(2) != b"\r\n":
+                raise ValueError("truncated chunk")
+            body += chunk
 
     def _send(self, status, body):
         self.send_response(status)

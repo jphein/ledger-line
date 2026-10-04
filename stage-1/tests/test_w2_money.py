@@ -322,3 +322,43 @@ class HttpLoadTests(ServiceCase):
         self.assertEqual(sorted({s for s, _ in results}), [201, 409])
         self.assertLess(max(t for _, t in results), 5)
         self.assertEqual(self.balance("bob"), 0)
+
+
+class CanonicalBodyRegressionTests(ServiceCase):
+    """Auditor W1/W2 findings 1-2: exact canonical numbers, never a 5xx (R-30, R-46, D-11)."""
+
+    def pay(self, raw, key):
+        return self.call("POST", "/payments", raw=raw, token=self.tok["ada"], key=key)
+
+    def test_huge_exponent_in_unknown_field_is_ignored(self):
+        body = b'{"to_handle":"bob","amount":100,"x":1e999999999999}'
+        first = self.pay(body, "ov")
+        self.assertEqual(first[0], 201, first[1])
+        self.assertEqual(self.pay(body, "ov"), (200, first[1]))
+        self.assertError(self.pay(b'{"to_handle":"bob","amount":100,"x":1e999999999998}', "ov"),
+                         409, "idempotency_key_reuse")
+        self.assertError(self.pay(b'{"to_handle":"bob","amount":1e999999999999}', "ov2"),
+                         422, "validation_failed")
+
+    def test_31_digit_integers_are_distinct_both_directions(self):
+        a = b'{"to_handle":"bob","amount":1,"x":1000000000000000000000000000001}'
+        b = b'{"to_handle":"bob","amount":1,"x":1000000000000000000000000000000}'
+        self.assertEqual(self.pay(a, "k3")[0], 201)
+        self.assertError(self.pay(b, "k3"), 409, "idempotency_key_reuse")
+        self.assertEqual(self.pay(b, "k4")[0], 201)
+        self.assertError(self.pay(a, "k4"), 409, "idempotency_key_reuse")
+        self.assertEqual(self.pay(b'{"to_handle":"bob","amount":1,"x":1e30}', "k4")[0], 200)
+
+    def test_tiny_differences_and_equal_spellings(self):
+        self.assertEqual(self.pay(b'{"to_handle":"bob","amount":1,"x":1.0}', "k5")[0], 201)
+        self.assertError(self.pay(b'{"to_handle":"bob","amount":1,"x":1.00000000000000000000000000001}',
+                                  "k5"), 409, "idempotency_key_reuse")
+        self.assertEqual(self.pay(b'{"to_handle":"bob","amount":1000,"x":1}', "k6")[0], 201)
+        for spelling in (b"1000.0", b"1e3", b"1E+3", b"10000e-1"):
+            self.assertEqual(self.pay(b'{"to_handle":"bob","x":1,"amount":' + spelling + b"}",
+                                      "k6")[0], 200)
+
+    def test_deeply_nested_unknown_field_never_5xx(self):
+        for depth in (500, 990, 5000):
+            raw = b'{"to_handle":"bob","amount":1,"x":' + b"[" * depth + b"]" * depth + b"}"
+            self.assertIn(self.pay(raw, f"deep{depth}")[0], (201, 400))

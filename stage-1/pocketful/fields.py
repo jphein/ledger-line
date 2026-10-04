@@ -3,6 +3,7 @@ import re
 from decimal import Decimal
 
 from .errors import ApiError, invalid, malformed
+from .jsonio import exact_number
 
 MAX_AMOUNT = 1_000_000_000
 MAX_NOTE = 200
@@ -10,22 +11,22 @@ MAX_KEY = 255
 VISIBILITIES = ("public", "private")
 HANDLE_RE = re.compile(r"[a-z0-9_]{1,20}")
 _DIGITS_RE = re.compile(r"[0-9]+")
-_MISSING = object()
 
 
 def integral_value(value):
-    """Return value as an int if it is a JSON number with an integral value, else None."""
-    if isinstance(value, bool):
+    """Return value as an int if it is a JSON number with an integral value, else None.
+
+    Exact (no decimal context). Magnitudes above 10**31 exceed every range the
+    service accepts and are reported as None rather than materialised.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, Decimal)):
         return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, Decimal):
-        if not value.is_finite() or value.adjusted() > 30:
-            return None
-        if value != value.to_integral_value():
-            return None
-        return int(value)
-    return None
+    if isinstance(value, Decimal) and not value.is_finite():
+        return None
+    sign, digits, exponent = exact_number(value)
+    if exponent < 0 or len(digits) + exponent > 31:
+        return None
+    return (-1 if sign else 1) * int(digits) * 10 ** exponent
 
 
 def amount(body, name="amount", minimum=1):

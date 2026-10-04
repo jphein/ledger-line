@@ -220,3 +220,46 @@ class HttpServerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HttpFramingTests(unittest.TestCase):
+    """Auditor W1 findings 3-4: chunked bodies are decoded; short bodies are 400."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = make_server(0)
+        cls.port = cls.server.server_address[1]
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def exchange(self, payload):
+        import socket
+        with socket.create_connection(("127.0.0.1", self.port), timeout=15) as sock:
+            sock.sendall(payload)
+            sock.shutdown(socket.SHUT_WR)
+            data = b""
+            while chunk := sock.recv(65536):
+                data += chunk
+        return data
+
+    def test_handler_has_socket_timeout(self):
+        self.assertEqual(self.server.RequestHandlerClass.timeout, 10)
+
+    def test_chunked_reset_then_keepalive_request(self):
+        body = json.dumps(fixture()).encode()
+        payload = (b"POST /_test/reset HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+                   + f"{len(body):x}\r\n".encode() + body + b"\r\n0\r\n\r\n"
+                   + b"GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+        data = self.exchange(payload)
+        self.assertTrue(data.startswith(b"HTTP/1.1 204"), data[:200])
+        self.assertEqual(data.count(b"HTTP/1.1 200"), 1, data)
+        self.assertIn(b'{"status": "ok"}', data)
+
+    def test_short_body_is_400(self):
+        data = self.exchange(b"POST /_test/reset HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n{}")
+        self.assertTrue(data.startswith(b"HTTP/1.1 400"), data[:200])
+        self.assertIn(b"malformed_request", data)

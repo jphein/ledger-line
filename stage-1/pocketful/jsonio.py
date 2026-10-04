@@ -1,18 +1,14 @@
 """Owns JSON at the boundary: strict parsing, response encoding, canonical body form.
 
 Floats parse as Decimal so `1e3`, `1000.0` and huge exponents stay exact and never
-become inf. The canonical form drives replay comparison (D-11): type-aware and
-recursive, so a bool never equals a number while `1000` equals `1000.0`.
+become inf. The canonical form drives replay comparison (D-11): type-aware,
+recursive and exact at every magnitude, so a bool never equals a number while
+`1000` equals `1000.0` and `1e3`.
 """
 import json
 from decimal import Decimal, InvalidOperation
 
 from .errors import malformed
-
-# Integers at or beyond this magnitude are canonicalised via Decimal so that
-# a long integer literal and the same value in exponent form compare equal
-# without ever materialising a giant Python int from an exponent.
-_BIG = 10 ** 30
 
 
 def _reject_constant(name):
@@ -40,33 +36,64 @@ def encode(value):
         return json.dumps(value).encode("ascii")
 
 
-def _canon_number(value):
+def exact_number(value):
+    """(sign, digits, exponent) with trailing zeros moved into the exponent.
+
+    Pure digit manipulation, no decimal context: exact at every magnitude and
+    never raises, so two numbers get the same triple iff they are equal.
+    Zero is (0, "0", 0) whatever its sign or exponent.
+    """
     if isinstance(value, int):
-        if abs(value) < _BIG:
-            return "i" + str(value)
-        value = Decimal(value)
-    if value == 0:
-        return "i0"
-    if value.is_finite() and value.adjusted() < 30 and value == value.to_integral_value():
-        return "i" + str(int(value))
-    return "d" + str(value.normalize())
+        sign, digits, exponent = int(value < 0), str(abs(value)), 0
+    else:
+        sign, digit_tuple, exponent = value.as_tuple()
+        digits = "".join(map(str, digit_tuple))
+    stripped = digits.rstrip("0")
+    if not stripped:
+        return 0, "0", 0
+    return sign, stripped, exponent + len(digits) - len(stripped)
 
 
 def canonical(value):
-    """Return a string equal for two bodies iff they are the same JSON value."""
-    if value is None:
-        return "n"
-    if value is True:
-        return "t"
-    if value is False:
-        return "f"
-    if isinstance(value, str):
-        return "s" + json.dumps(value)
-    if isinstance(value, (int, Decimal)):
-        return _canon_number(value)
-    if isinstance(value, list):
-        return "[" + ",".join(canonical(v) for v in value) + "]"
-    if isinstance(value, dict):
-        items = sorted(value.items())
-        return "{" + ",".join(json.dumps(k) + ":" + canonical(v) for k, v in items) + "}"
-    raise TypeError(f"unexpected JSON value {type(value).__name__}")
+    """Return a string equal for two bodies iff they are the same JSON value.
+
+    Iterative (explicit stack), so arbitrarily deep bodies never hit the
+    recursion limit. Tuples on the stack are literal output; JSON has no tuples.
+    """
+    out = []
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, tuple):
+            out.append(item[0])
+        elif item is None:
+            out.append("n")
+        elif item is True:
+            out.append("t")
+        elif item is False:
+            out.append("f")
+        elif isinstance(item, str):
+            out.append("s" + json.dumps(item))
+        elif isinstance(item, (int, Decimal)):
+            sign, digits, exponent = exact_number(item)
+            out.append(f"#{sign}:{digits}e{exponent}")
+        elif isinstance(item, list):
+            out.append("[")
+            stack.append(("]",))
+            for index in range(len(item) - 1, -1, -1):
+                stack.append(item[index])
+                if index:
+                    stack.append((",",))
+        elif isinstance(item, dict):
+            out.append("{")
+            stack.append(("}",))
+            pairs = sorted(item.items(), key=lambda pair: pair[0])
+            for index in range(len(pairs) - 1, -1, -1):
+                key, member = pairs[index]
+                stack.append(member)
+                stack.append((json.dumps(key) + ":",))
+                if index:
+                    stack.append((",",))
+        else:
+            raise TypeError(f"unexpected JSON value {type(item).__name__}")
+    return "".join(out)

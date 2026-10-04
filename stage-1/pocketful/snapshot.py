@@ -168,4 +168,8 @@ def build_state(doc):
 
 
 def import_state(store, doc):
-    store.replace(build_state(doc))
+    try:
+        state = build_state(doc)
+    except RecursionError:
+        raise invalid("state is nested too deeply")
+    store.replace(state)
