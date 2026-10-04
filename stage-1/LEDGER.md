@@ -178,10 +178,10 @@ Quoted words come from the spec. Item tags: `[W1]` runtime/reset/auth/me/errors,
 - D-08 Settlement entry check order per entry: amount/note/visibility/types -> unknown handle 404 -> self 422 `self_payment`; first failing entry in input order wins.
 - D-09 Wrong method on a known path -> 404 `not_found` with error body (never 5xx).
 - D-10 Idempotency records are keyed by (user, method, path, key): the same key on `/requests/rq_1/pay` and `/requests/rq_2/pay` is independent (R-43).
-- D-11 Body comparison for replay is type-aware: a bool never equals a number; an int equals an integral float (`1000` == `1000.0`); key order and whitespace ignored.
+- D-11 Body comparison for replay is type-aware: a bool never equals a number; an int equals an integral float (`1000` == `1000.0`); key order and whitespace ignored; applied recursively (`[1]` vs `[true]` differ).
 - D-12 Response encoding: UTF-8; if encoding fails (lone surrogate), fall back to `ensure_ascii=True` (same JSON value). Notes are not rejected for surrogates.
 - D-13 scrypt parameters chosen so a 1000-user reset finishes < 6 s on 2 vCPU (likely n=2^11..2^12, r=8, p=1); same parameters for signup; hashing outside the global lock, and signup re-checks email and handle inside the lock.
-- D-14 Fixture payments/requests get `created_at` = reset time, plus a monotonic sequence number for deterministic newest-first ordering; ties broken by sequence descending.
+- D-14 Fixture payments/requests get `created_at` = reset time, plus a monotonic sequence number for deterministic newest-first ordering; ties broken by sequence descending; a later fixture array index counts as newer.
 - D-15 Decline and cancel ignore the request body entirely (absent, empty or anything). Pay with an absent/empty body is treated as `{}` (so it is the same body as `{}` for replays); a non-empty body that does not parse is 400.
 - D-16 Third-party pay/decline/cancel gives 403 (D-05) chosen over §5's 404 "not visible to this caller" because the endpoint tables say "Not the payer is 403".
 - D-17 Settlement entry fields of the wrong JSON type (e.g. numeric `from_handle`) follow D-03 (400); only amount/note/visibility give 422; batch shape gives 422 per §11.
@@ -193,4 +193,5 @@ Quoted words come from the spec. Item tags: `[W1]` runtime/reset/auth/me/errors,
 - W1 Skeleton, runtime contract, reset/fixture, errors, auth, /me: R-00..R-40, S-01, S-02, S-12, S-14, S-15, S-16, S-19..S-23, I-08.
 - W2 Idempotency, payments, requests, activity: R-41..R-75, I-01..I-06, S-03..S-11, S-13.
 - W3 Splits, export/import, settlements: R-76..R-101, I-07, S-17, S-18, S-24.
+- W3 re-proves I-01, I-02, I-04 and I-06-style races for splits and settlements (concurrent identical keys, net-funds storms).
 - D-lines apply to every item.
