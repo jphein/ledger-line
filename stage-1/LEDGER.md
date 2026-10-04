@@ -187,4 +187,10 @@ Quoted words come from the spec. Item tags: `[W1]` runtime/reset/auth/me/errors,
 - D-17 Settlement entry fields of the wrong JSON type (e.g. numeric `from_handle`) follow D-03 (400); only amount/note/visibility give 422; batch shape gives 422 per §11.
 
 ## Decision log (changes)
-- 15:45 Auditor challenge merged: R-00 added; R-05, R-85, R-97 restored to spec wording; R-48 decision moved to D-11; R-40 marked as our choice; S-19..S-24 and D-10..D-17 added (builder points 1-7 merged as D-11..D-15).
+- 15:35 Auditor challenge merged: R-00 added; R-05, R-85, R-97 restored to spec wording; R-48 decision moved to D-11; R-40 marked as our choice; S-19..S-24 and D-10..D-17 added (builder points 1-7 merged as D-11..D-15).
+
+## Work items (every line belongs to exactly one)
+- W1 Skeleton, runtime contract, reset/fixture, errors, auth, /me: R-00..R-40, S-01, S-02, S-12, S-14, S-15, S-16, S-19..S-23, I-08.
+- W2 Idempotency, payments, requests, activity: R-41..R-75, I-01..I-06, S-03..S-11, S-13.
+- W3 Splits, export/import, settlements: R-76..R-101, I-07, S-17, S-18, S-24.
+- D-lines apply to every item.
