@@ -772,3 +772,21 @@ def test_imported_stage1_payments_have_null_authorization_id():
                         **{k: v for k, v in bundle["payment_body"].items()
                            if k not in ("to_handle", "amount")}), 200)
     assert replay == bundle["payment"]                          # stored response, not rewritten
+
+
+@L("R-31", "R-206", "R-52")
+def test_signup_201_shape_stage2():
+    """Replaces the deselected stage-1 test_signup_201_shape_and_token: the R-31 body is
+    unchanged in stage 2; only its /me assertion is widened for R-206's added fields."""
+    w2()
+    r = Api().post("/auth/signup", {"email": "carol@example.org", "password": "12345678",
+                                    "display_name": "Carol ✨"})
+    b = ok(r, 201)
+    assert set(b) >= {"user_id", "display_name", "token"}
+    assert b["display_name"] == "Carol ✨" and isinstance(b["token"], str) and b["token"]
+    pf.check_id(b["user_id"])
+    m = me(Api(b["token"]))
+    expect = {"user_id": b["user_id"], "display_name": "Carol ✨", "handle": "carol",
+              "balance": 0, "total": 0, "available": 0, "held": 0, "currency": "EUR",
+              "minor_units": 2}
+    assert {k: m[k] for k in expect} == expect
