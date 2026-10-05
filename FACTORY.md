@@ -89,7 +89,7 @@ last accepted revision.
 | Work ahead of the stage boundary | ledger boundary + auditor scope check | a scope finding |
 | A fix that lands after review | same-hash acceptance rule | mismatched hashes in the room |
 
-**In the judged run** (all times PDT, from `room.json` and `git log`):
+**Stage 1 of the judged run** (all times PDT, from `room.json` and `git log`):
 
 - 15:43: the auditor accepted W1 but filed four findings. Two of them, a body containing
   `1e999999999999` crashing number handling into a 500, and numbers rounded to 28 digits
@@ -105,24 +105,61 @@ last accepted revision.
   S-23, the 1000-user reset over the spec's 10 s limit, reproduced three times in
   isolation at 14–18 s.
 
+**Stage 2** (dispatched separately at 17:31:59 into the same room):
+
+- 17:34: the lead committed the stage-2 ledger (R-200..R-267, I-200..I-205,
+  S-200..S-214) and carried the failed S-23 forward as a stage-2 requirement (R-202).
+  At 17:36 the auditor's challenge added 13 points, among them a rewrite of the S-23
+  fix's own design (D-208).
+- 17:37: the auditor rejected the builder's first S-23 commit because it implemented
+  the *old* wording of D-208. The builder had already superseded it (`fad9ad0`).
+- 17:50: X2 (the browser UI) was rejected on R-245: the activity feed fetched one page
+  of 50 and silently dropped the rest. The fix (`be463b8`) pages every list to the end.
+- 17:57: the binding verdict on X1–X3 was "changes needed": a hold's expiry was clamped
+  with floating-point seconds (R-212). The fix landed in `18849a9` at 17:58, and the
+  auditor accepted at 17:59.
+- 18:04: the prover timed S-23 in the 2-vCPU container: 6.24 s and 8.34 s for 1000
+  distinct passwords. That passes 10 s, but not the lead's own 7 s margin (D-215). The
+  lead lowered the seeded-user hashing cost; the one-line change (`3793fd2`) was
+  accepted by the auditor at 18:05.
+- 18:17: the prover's full round at `18849a9`: no product failures, every
+  machine-checkable line passing, the sample harness claiming stage 2 (35/35). The first
+  run had 5 failures, all bugs in the prover's own browser tests (fixed in `8fba553`,
+  re-run passing). The prover reported them as its own, and did not ask the builder to
+  change correct code.
+
 ## Measured on the judged run
 
-| Measure | Value |
-|---|---|
-| Dispatch (the only human message) | 15:31:42 |
-| First ledger commit / ledger accepted by the auditor | 15:33:33 / 15:36:56 |
-| Work items built (W1, W2, W3) | 15:41:46, 15:44:15, 15:46:53 |
-| Rejections that changed the work | 1: W2, 2 blocking findings, fixed in `d0b69b4` (15:48:54) |
-| Auditor's binding accept of W1–W3 | 15:50:20, **18 min 38 s after dispatch** |
-| Prover: event sample checks / own suite | 147/147 / 440 of 441 (S-23 failed) |
-| Commits per seat | lead 4 · builder 4 · prover 7 · auditor 0 (it reviews, never commits) |
-| Room events per seat (messages, tool calls, results) | prover 233 · builder 207 · lead 141 · auditor 99 |
-| Human messages in the room | 1 (the dispatch) |
-| Model spend, judged room | 24.4 M tokens, ≈ $15.06 at list prices: prover $6.33 · builder $4.37 · auditor $2.38 · lead $1.98 |
-| Model spend, rehearsal room (practice track) | 5.8 M tokens, ≈ $4.55 |
-| Isolated check, fresh clone of `61b8e1e` | claimed stage 1, suite 1 147/147 |
+| Measure | Stage 1 | Stage 2 |
+|---|---|---|
+| Dispatch (the only human message of the stage) | 15:31:42 | 17:31:59 |
+| First ledger commit | 15:33:33 | 17:34:28 |
+| Ledger challenge merged | 15:36:56 (12 points) | 17:36:44 (13 points) |
+| Work items | W1, W2, W3 | X1 (API, holds), X2 (UI core), X3 (screens, visual pass) |
+| Rejections that changed the work | 1 (W2: 2 blocking) | 3 (X1 D-208 wording; X2 R-245; X1 R-212), plus the D-215 cost decision |
+| Auditor's binding accept | 15:50:20 (+18 min 38 s) | 17:59:37 (+27 min 38 s); re-check of `3793fd2` 18:05:20 |
+| Prover's own suite | 440 of 441 at `d0b69b4` | 267 of 272 at `18849a9`; the 5 were its own test bugs, fixed and re-run passing: no product failures |
+| Sample checks, prover's run | 147/147 (s1-1) | 24/35 at 18:03 (s2-1, `ea8af63`) → 35/35 at 18:17 (s2-2, `18849a9`) |
+| Ended | deadlock at 16:10 (no report) | seats stopped by the operator's helper at 18:18 (no report) |
 
-Spend figures are `band usage rooms` estimates at catalog list prices, not a bill.
+| Per seat, whole run | lead | builder | prover | auditor |
+|---|---|---|---|---|
+| Commits | 8 | 14 | 14 | 0 (it reviews, never commits) |
+| Room messages | 51 | 19 | 10 | 17 |
+| Room events (messages, tool calls, results) | 369 | 535 | 508 | 283 |
+
+`room.json` holds 1698 events: the four seats' 1695, plus the human joining the room and
+the two dispatches. By stage: stage 1 lead 141 · builder 208 · prover 235 ·
+auditor 100; stage 2 lead 228 · builder 327 · prover 273 · auditor 183.
+
+| Model spend (`band usage`, catalog list prices, not a bill) | |
+|---|---|
+| Judged room, stage 1 | 24.4 M tokens, ≈ $15.06: prover $6.33 · builder $4.37 · auditor $2.38 · lead $1.98 |
+| Judged room, stage 2 | not measured: Band attributed the stage-2 seat sessions to no room |
+| Rehearsal room (practice track) | 5.8 M tokens, ≈ $4.55 |
+
+Final check, isolated mode, fresh clone: `stage-1/` claims stage 1 (147/147);
+`stage-2/` claims stage 2 (147/147 + 35/35), and the stage-3 suite fails, as it should.
 
 ## What we tried that failed
 
@@ -154,16 +191,33 @@ we would build into the next version of the mandates (not changed here, because
 - *Prover:* bounded waits only, with a timeout on every wait. Never an open-ended
   follow.
 
-### 2. A performance requirement measured on the wrong instrument
+For stage 2 we put the first and third of these into the **stage-2 dispatch** as a
+"liveness rule" (the task, not the mandates). In stage 2 every one of the 40 replies
+the seats sent was posted; none stayed staged.
+
+### 2. The stage-2 run was cut short from outside the factory
+
+At 18:18 the operator's helper agent stopped the seats, believing the run had finished.
+No code or messages were changed. The coordinator's stage-2 report was therefore never
+written. The lead had just asked the prover for one more round on the acceptance
+revision `3793fd2` (one line after the fully proven `18849a9`). The dispatch's time box
+allowed new work until 19:11. Lesson for operators: a stopped seat looks exactly like a
+finished one, so stop a run only on the coordinator's final report.
+
+### 3. A performance requirement measured on the wrong instrument
 
 The builder did measure the password-hashing cost before choosing parameters: "1000
 scrypt hashes … n=2^11: 2.47 s", and it noted itself that "this host is not a measured
 2-vCPU container". In the 2-vCPU container the 1000-user reset took 14–18 s. The ledger
 had the requirement (S-23) and the prover caught it, so the factory worked as designed up
-to the routing step that the deadlock cut off. Lesson: a performance number is measured
-under the stated limits or it is not evidence.
+to the routing step that the deadlock cut off. Stage 2 closed the loop: the lead carried
+S-23 forward as R-202, the auditor rewrote the fix's design, and the prover timed it *in
+the 2-vCPU container* (6.24–8.34 s). The lead then halved the seeded-user cost for
+margin. Lesson: a performance number is measured under the stated limits or it is not
+evidence. The limits cap cores, not per-core speed, and the same stage-1 code resets in
+3.7 s on a desktop CPU and 14–18 s on the laptop that ran the factory.
 
-### 3. Rehearsal findings (practice track, before the judged run)
+### 4. Rehearsal findings (practice track, before the judged run)
 
 - **A burst the service couldn't absorb, caught by the storms.** The prover's 50-wide
   storm showed `200: 44, TimeoutError: 6`. The builder reproduced it at 1,000 requests
