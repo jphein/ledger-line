@@ -171,6 +171,7 @@ split and authorizations screens, product/visual quality, upgrade-in-browser.
 
 ## Decision log (stage 2)
 - 17:36 Auditor challenge merged (13 points): D-208 rewritten (distinct passwords, per-user salts, measured in container), D-205 milliseconds, D-203 capture amount rule, D-204 quote, D-211..D-214, S-215..S-217, R-200 amends R-01, R-227/R-243/R-263 sharpened.
+- 18:01 Prover round at ea8af63: distinct-password 1000-user reset 6.24 s / 8.34 s in the 2 vCPU container (per-hash 7.08 ms at 2 threads; 5.02 ms at n=1024). 8.34 s exceeds the D-215 7 s margin → seeded-user scrypt n lowered to 2^10 (signups stay 2^11).
 - 17:35 Ledger written; stage 1 ledger carried forward below. Stage 1 judged revision d0b69b4 passed 440/441 of the prover suite; S-23 failed in the container (14–18 s) → R-202 makes it a stage 2 requirement, fix D-208.
 
 ---
