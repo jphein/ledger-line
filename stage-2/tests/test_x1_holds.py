@@ -211,7 +211,7 @@ class ExpiryTests(HoldCase):
         self.reset_with(authorization_ttl_seconds=10 ** 12)
         status, a = self.authorize(100, key="big")
         self.assertEqual(status, 201, a)
-        self.assertTrue(a["expires_at"].startswith("9999-12-31"))
+        self.assertEqual(a["expires_at"], "9999-12-31T00:00:00.000+00:00")
         self.assertEqual(self.me("ada")["held"], 100)
 
     def test_seeded_authorizations(self):

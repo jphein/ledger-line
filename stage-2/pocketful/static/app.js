@@ -200,7 +200,9 @@
       const sep = path.includes("?") ? "&" : "?";
       const res = await api("GET", `${path}${sep}limit=200&offset=${offset}`);
       if (res.kind !== "ok") return res;
-      items.push(...res.data[field]);
+      const idKey = { payments: "payment_id", requests: "request_id", authorizations: "authorization_id" }[field];
+      const seen = new Set(items.map(item => item[idKey]));
+      items.push(...res.data[field].filter(item => !seen.has(item[idKey])));  // writes between pages
       if (!res.data.has_more || !res.data[field].length) return { kind: "ok", data: { [field]: items } };
       offset += res.data[field].length;
     }

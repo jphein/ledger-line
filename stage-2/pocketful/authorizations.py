@@ -43,7 +43,9 @@ def _create(state, user, body):
         raise insufficient()
     created = _EPOCH + timedelta(milliseconds=now_us() // 1000)
     # Any positive ttl is valid; expiry is clamped to the last representable day.
-    expires = created + timedelta(seconds=min(state.ttl_seconds, (_LAST - created).total_seconds()))
+    # Integer comparison first: no float rounding, and no timedelta overflow.
+    limit = (_LAST - created) // timedelta(seconds=1)
+    expires = _LAST if state.ttl_seconds >= limit else created + timedelta(seconds=state.ttl_seconds)
     auth_id = state.new_id("a_", state.authorizations)
     record = {
         "authorization_id": auth_id,
