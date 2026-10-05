@@ -89,7 +89,7 @@ access, 2 vCPU, 2 GiB) on a fresh clone of the final revision:
 ## Video and slides
 
 - Video: https://youtu.be/WMwBttawW9M (narrated walkthrough of stages 1 and 2, with the room recording and the band-built UI; synthetic voice, Azure DragonHD). Stage-1-only cut: https://youtu.be/pRyQLyAkll8
-- Slides: `ledger-line-slides-v2.pdf` (in the submission)
+- Slides (stages 1 and 2): [`docs/ledger-line-slides-v2.pdf`](docs/ledger-line-slides-v2.pdf)
 
 ## License
 
