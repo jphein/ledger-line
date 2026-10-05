@@ -517,6 +517,19 @@ def test_feed_visibility_rule_in_ui(browser):
 
 
 @L("R-245")
+def test_feed_shows_every_visible_payment_beyond_one_page(page):
+    """One activity item per visible payment, also past 50 and past 200 (pagination)."""
+    fix = plain_fixture()
+    fix["payments"] = [{"id": f"p_{i}", "from_user_id": "u_ada", "to_user_id": "u_bob",
+                        "amount": 1, "note": f"n{i}", "visibility": "public"}
+                       for i in range(230)]
+    w = pf.world(fix)
+    sign_in_as(page, w, "dee", "/")
+    expect(tid(page, "activity-item-p_0")).to_have_count(1, timeout=10000)
+    expect(page.locator("[data-testid^='activity-item-']")).to_have_count(230, timeout=10000)
+
+
+@L("R-245")
 def test_empty_activity_then_first_item(page):
     fix = plain_fixture()
     fix["payments"] = [pf.SEED_PAYMENTS[1]]   # bob->cy private: invisible to dee
