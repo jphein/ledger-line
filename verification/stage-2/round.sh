@@ -82,7 +82,7 @@ echo "== carried-forward stage-1 suite against stage-2"
 RC1=${PIPESTATUS[0]}
 echo "== stage-2 suite"
 ( cd "$REPO/verification/stage-2" && POCKETFUL_URL=$URL STAGE1_EXPORT="$OUT/s1-export.json" \
-    UI_SHOTS="$OUT/shots" "$PY" -m pytest --ledger-report "$OUT/ledger-s2.json" "$@" ) \
+    UI_SHOTS="${UI_SHOTS:-$OUT/shots}" "$PY" -m pytest --ledger-report "$OUT/ledger-s2.json" "$@" ) \
     2>&1 | tee "$OUT/pytest-s2.txt" | tail -120
 RC2=${PIPESTATUS[0]}
 set -e
