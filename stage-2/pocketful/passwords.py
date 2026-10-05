@@ -14,6 +14,10 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 
 N, R, P = 2 ** 11, 8, 1
+# D-215: fixture-seeded users may use a cheaper cost so a 1000-user reset with
+# distinct passwords fits the 10 s limit in a 2 vCPU container. The cost is
+# stored in each record, so verification always uses the record's own n.
+FIXTURE_N = 2 ** 11
 _DKLEN = 32
 
 
@@ -57,32 +61,32 @@ def hash_password(password):
     return f"scrypt${N}${R}${P}${salt.hex()}${digest.hex()}"
 
 
-def _scrypt_once(password):
-    """One scrypt per distinct fixture password: (shared salt, derived key)."""
-    shared_salt = os.urandom(16)
-    return shared_salt, _derive(password, shared_salt, N, R, P)
-
-
-def _wrap(shared_salt, derived):
+def _wrap(shared_salt, derived, n):
     """Per-user record over a shared derivation: sha256(user_salt || scrypt key)."""
     user_salt = os.urandom(16)
     digest = hashlib.sha256(user_salt + derived).digest()
-    return (f"scrypt-sha256${N}${R}${P}${shared_salt.hex()}${user_salt.hex()}"
+    return (f"scrypt-sha256${n}${R}${P}${shared_salt.hex()}${user_salt.hex()}"
             f"${digest.hex()}")
 
 
 def hash_many(passwords):
-    """Hash a fixture's passwords (D-208): one scrypt per distinct password, in a
-    pool, then a per-user salted sha256 wrapper so no two records are equal and
-    stored records never reveal that two users share a password."""
+    """Hash a fixture's passwords (D-208, D-215).
+
+    One shared salt per reset, so the stored shared-salt field is identical for
+    every seeded user and says nothing about equal passwords; one scrypt per
+    distinct password (FIXTURE_N), in a pool; then a per-user salted sha256 so
+    every record is unique.
+    """
+    shared_salt = os.urandom(16)
     distinct = list(dict.fromkeys(passwords))
+    derive = lambda pw: _derive(pw, shared_salt, FIXTURE_N, R, P)  # noqa: E731
     if len(distinct) <= 1:
-        derived = [_scrypt_once(pw) for pw in distinct]
+        derived = [derive(pw) for pw in distinct]
     else:
         with ThreadPoolExecutor(min(_WORKERS, len(distinct))) as pool:
-            derived = list(pool.map(_scrypt_once, distinct))
+            derived = list(pool.map(derive, distinct))
     by_password = dict(zip(distinct, derived))
-    return [_wrap(*by_password[password]) for password in passwords]
+    return [_wrap(shared_salt, by_password[pw], FIXTURE_N) for pw in passwords]
 
 
 def is_valid_hash(stored):

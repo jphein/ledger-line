@@ -22,7 +22,8 @@ class ResetTests(ServiceCase):
         status, body = self.call("GET", "/me", token=self.tok["ada"])
         self.assertEqual(status, 200)
         self.assertEqual(body, {"user_id": "u_ada", "display_name": "Ada", "handle": "ada",
-                                "balance": 10000, "currency": "EUR", "minor_units": 2})
+                                "balance": 10000, "total": 10000, "available": 10000,
+                                "held": 0, "currency": "EUR", "minor_units": 2})
 
     def test_negative_balance_rejected_and_state_kept(self):
         bad = fixture()
@@ -208,7 +209,9 @@ class FixturePasswordTests(ServiceCase):
             hashes = passwords.hash_many(["a long one", "b long one", "a long one", "c long one"])
         self.assertEqual(derive.call_count, 3)
         self.assertEqual(len(set(hashes)), 4)
+        self.assertEqual(len({h.split("$")[4] for h in hashes}), 1)  # one shared salt per reset
         self.assertEqual(len({h.split("$")[5] for h in hashes}), 4)  # user salts
+        self.assertEqual(len({h.split("$")[6] for h in hashes}), 4)  # digests
         self.assertTrue(passwords.verify_password("a long one", hashes[2]))
         self.assertTrue(passwords.verify_password("b long one", hashes[1]))
         self.assertFalse(passwords.verify_password("a long one", hashes[1]))

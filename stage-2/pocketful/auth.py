@@ -46,10 +46,15 @@ def bearer_token(store, headers):
 
 
 def caller(state, token):
-    """The User behind a token in this state (call with the lock held)."""
+    """The User behind a token in this state (call with the lock held).
+
+    Every authenticated handler starts here, so expired holds are released
+    before any read or write sees them (D-202).
+    """
     user = state.users.get(state.tokens.get(token))
     if user is None:
         raise unauthenticated("unknown bearer token")
+    state.sweep_expired()
     return user
 
 
@@ -108,6 +113,8 @@ def me(store, token):
     with store.lock:
         state = store.state
         user = caller(state, token)
+        held = state.held[user.id]
         return 200, {"user_id": user.id, "display_name": user.display_name,
-                     "handle": user.handle, "balance": user.balance,
+                     "handle": user.handle, "balance": user.balance, "total": user.balance,
+                     "available": user.balance - held, "held": held,
                      "currency": state.currency, "minor_units": state.minor_units}

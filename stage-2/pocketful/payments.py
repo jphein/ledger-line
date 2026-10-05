@@ -21,17 +21,19 @@ def check_credit(receiver, amount):
         raise invalid("the receiving balance would exceed 2^53")
 
 
-def transfer(state, sender, receiver, amount, note, visibility, request_id=None):
+def transfer(state, sender, receiver, amount, note, visibility, request_id=None,
+             authorization_id=None):
     """Record a payment and move the money. Requires the lock and checked funds."""
     payment = record_payment(state, sender, receiver, amount, note, visibility,
-                             request_id=request_id)
+                             request_id=request_id, authorization_id=authorization_id)
     sender.balance -= amount
     receiver.balance += amount
     return payment
 
 
 def record_payment(state, sender, receiver, amount, note, visibility,
-                   request_id=None, settlement_id=None, created_at=None):
+                   request_id=None, settlement_id=None, created_at=None,
+                   authorization_id=None):
     """Append the payment record only; the caller moves the money under the same lock."""
     payment_id = state.new_id("p_", state.payments)
     payment = {
@@ -41,6 +43,7 @@ def record_payment(state, sender, receiver, amount, note, visibility,
         "amount": amount, "currency": state.currency,
         "note": note, "visibility": visibility,
         "request_id": request_id, "settlement_id": settlement_id,
+        "authorization_id": authorization_id,
         "created_at": created_at or now_rfc3339(),
     }
     state.payments[payment_id] = payment
@@ -59,7 +62,7 @@ def _create(state, user, body):
         raise not_found("no user has that handle")
     if receiver.id == user.id:
         raise ApiError(422, "self_payment", "cannot pay yourself")
-    if user.balance < amount:
+    if state.available(user) < amount:
         raise insufficient()
     check_credit(receiver, amount)
     return transfer(state, user, receiver, amount, note, visibility)

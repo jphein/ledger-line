@@ -7,7 +7,8 @@ import re
 import sys
 import traceback
 
-from . import auth, fixture, money_requests, payments, settlements, snapshot, splits
+from . import (auth, authorizations, fixture, money_requests, payments, settlements, snapshot,
+               splits)
 from .errors import ApiError, not_found
 from .jsonio import parse_body
 
@@ -77,6 +78,10 @@ ROUTES = [
     ("POST", r"/requests/([^/]+)/cancel", money_requests.cancel, AUTHED),
     ("POST", r"/splits", splits.create, AUTHED),
     ("POST", r"/settlements", settlements.create, AUTHED),
+    ("POST", r"/authorizations", authorizations.create, AUTHED),
+    ("GET", r"/authorizations", authorizations.list_authorizations, AUTHED),
+    ("POST", r"/authorizations/([^/]+)/capture", authorizations.capture, AUTHED),
+    ("POST", r"/authorizations/([^/]+)/void", authorizations.void, AUTHED),
 ]
 
 

@@ -12,14 +12,17 @@ from decimal import Decimal
 from . import passwords
 from .errors import invalid
 from .fields import HANDLE_RE, VISIBILITIES, integral_value
-from .fixture import MAX_BALANCE, MINOR_UNITS, STATUSES
-from .state import State, User
+from .fixture import AUTH_STATUSES, MAX_BALANCE, MAX_TTL_SECONDS, MINOR_UNITS, STATUSES
+from .state import State, User, parse_rfc3339_us
 
 TRACK, FORMAT_VERSION = "pocketful", 1
 
 PAYMENT_FIELDS = ("payment_id", "from_user_id", "from_handle", "to_user_id", "to_handle",
                   "amount", "currency", "note", "visibility", "request_id",
                   "settlement_id", "created_at")
+AUTH_FIELDS = ("authorization_id", "from_user_id", "from_handle", "to_user_id", "to_handle",
+               "amount", "captured_amount", "remaining_amount", "currency", "note",
+               "visibility", "status", "expires_at", "payment_id", "created_at")
 REQUEST_FIELDS = ("request_id", "requester_id", "requester_handle", "payer_id",
                   "payer_handle", "amount", "currency", "note", "status", "payment_id",
                   "created_at")
@@ -28,6 +31,7 @@ REQUEST_FIELDS = ("request_id", "requester_id", "requester_handle", "payer_id",
 def export_state(store):
     with store.lock:
         s = store.state
+        s.sweep_expired()
         state = {
             "currency": s.currency, "minor_units": s.minor_units, "counter": s.counter,
             "users": [{"id": u.id, "email": u.email, "handle": u.handle,
@@ -42,6 +46,9 @@ def export_state(store):
             "idempotency": [{"user_id": k[0], "method": k[1], "path": k[2], "key": k[3],
                              "body": canon, "response": copy.deepcopy(response)}
                             for k, (canon, response) in s.idempotency.items()],
+            "authorization_ttl_seconds": s.ttl_seconds,
+            "authorizations": [dict(s.authorizations[a], payment_ids=list(
+                s.authorizations[a]["payment_ids"])) for a in s.authorization_log],
         }
     return {"track": TRACK, "format_version": FORMAT_VERSION, "state": state}
 
@@ -93,7 +100,7 @@ def _record(raw, names, nullable, users, user_fields):
     """Validate a payment/request record: exact field set, typed, users known."""
     record = {}
     for name in names:
-        if name == "amount":
+        if name in ("amount", "captured_amount", "remaining_amount"):
             record[name] = _get(raw, name, int)
             if not 0 <= record[name] <= MAX_BALANCE:
                 raise invalid("amount out of range")
@@ -138,7 +145,11 @@ def build_state(doc):
         state.operators.add(_known_user(user_id, state.users, "operator"))
 
     for p in _get(raw, "payments", list):
-        record = _record(p, PAYMENT_FIELDS, ("request_id", "settlement_id"), state.users, ("from_user_id", "to_user_id"))
+        record = _record(p, PAYMENT_FIELDS, ("request_id", "settlement_id"), state.users,
+                         ("from_user_id", "to_user_id"))
+        # Stage-1 exports have no authorization_id; it reads as null (D-207, D-211).
+        record["authorization_id"] = (_get(p, "authorization_id", str, nullable=True)
+                                      if "authorization_id" in p else None)
         if record["visibility"] not in VISIBILITIES:
             raise invalid("invalid payment visibility")
         _unique(state.payments, record["payment_id"], "payment id")
@@ -146,7 +157,8 @@ def build_state(doc):
         state.payment_log.append(record["payment_id"])
 
     for r in _get(raw, "requests", list):
-        record = _record(r, REQUEST_FIELDS, ("payment_id",), state.users, ("requester_id", "payer_id"))
+        record = _record(r, REQUEST_FIELDS, ("payment_id",), state.users,
+                         ("requester_id", "payer_id"))
         if record["status"] not in STATUSES:
             raise invalid("invalid request status")
         _unique(state.requests, record["request_id"], "request id")
@@ -164,7 +176,39 @@ def build_state(doc):
         user_id = _known_user(_get(rec, "user_id", str), state.users, "idempotency record")
         key = (user_id, _get(rec, "method", str), _get(rec, "path", str), _get(rec, "key", str))
         state.idempotency[key] = (_get(rec, "body", str), _plain(_get(rec, "response", dict)))
+
+    # Stage-2 additions; a stage-1 export has neither and gets the defaults (D-207).
+    if "authorization_ttl_seconds" in raw:
+        state.ttl_seconds = _get(raw, "authorization_ttl_seconds", int)
+        if not 1 <= state.ttl_seconds <= MAX_TTL_SECONDS:
+            raise invalid("authorization_ttl_seconds out of range")
+    for a in _get(raw, "authorizations", list) if "authorizations" in raw else []:
+        record, expiry = _authorization(a, state.users)
+        _unique(state.authorizations, record["authorization_id"], "authorization id")
+        state.add_authorization(record, expiry)
+    for user in state.users.values():
+        if state.held[user.id] > user.balance:
+            raise invalid("open holds exceed a user's balance")
     return state
+
+
+def _authorization(a, users):
+    record = _record(a, AUTH_FIELDS, ("payment_id",), users, ("from_user_id", "to_user_id"))
+    ids = _get(a, "payment_ids", list)
+    if not all(isinstance(i, str) for i in ids):
+        raise invalid("payment_ids must be strings")
+    record["payment_ids"] = list(ids)
+    amount, captured, remaining = (record["amount"], record["captured_amount"],
+                                   record["remaining_amount"])
+    if (record["status"] not in AUTH_STATUSES or record["visibility"] not in VISIBILITIES
+            or captured + remaining > amount
+            or (record["status"] != "open" and remaining != 0)):
+        raise invalid("inconsistent authorization")
+    try:
+        expiry = parse_rfc3339_us(record["expires_at"])
+    except (ValueError, OverflowError):
+        raise invalid("authorization expires_at is not RFC 3339")
+    return record, expiry
 
 
 def import_state(store, doc):

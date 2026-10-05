@@ -1,9 +1,10 @@
 """Owns POST /settlements: operator-only atomic net batches (R-92..R-101, spec §11).
 
 Inside one lock acquisition: every entry is validated in input order (D-08,
-D-17), then net affordability is checked per wallet (R-96), then all member
-payments are recorded and the net deltas applied. Any failure happens before
-the first write, so nothing commits and the key stays unclaimed (R-97).
+D-17), then net affordability is checked per wallet against available funds
+(R-96, R-208), then all member payments are recorded and the net deltas applied.
+Any failure happens before the first write, so nothing commits and the key
+stays unclaimed (R-97).
 """
 from collections import defaultdict
 
@@ -49,7 +50,7 @@ def _create(state, user, body):
         deltas[receiver.id] += amount
     for user_id, delta in deltas.items():
         balance = state.users[user_id].balance + delta
-        if balance < 0:
+        if balance - state.held[user_id] < 0:  # held funds cannot fund net debits (R-208)
             raise insufficient()
         if balance > MAX_BALANCE:
             raise invalid("a resulting balance would exceed 2^53")

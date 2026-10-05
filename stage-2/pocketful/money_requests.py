@@ -69,7 +69,7 @@ def pay(store, req, token):
         if record["status"] != "pending":
             raise not_pending()
         amount = record["amount"]
-        if user.balance < amount:
+        if state.available(user) < amount:
             raise insufficient()
         receiver = state.users[record["requester_id"]]
         check_credit(receiver, amount)
