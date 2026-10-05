@@ -166,17 +166,68 @@ class ScryptTimingTests(unittest.TestCase):
         self.assertTrue(passwords.verify_password("correct horse", stored))
         self.assertFalse(passwords.verify_password("correct horsf", stored))
 
-    def test_thousand_user_reset_timing(self):
+    def thousand_users(self, password_of):
         f = fixture()
         f["payments"], f["requests"], f["settlement_operator_ids"] = [], [], []
-        f["users"] = [{"id": f"u{i}", "email": f"u{i}@x.com", "password": "correct horse",
+        f["users"] = [{"id": f"u{i}", "email": f"u{i}@x.com", "password": password_of(i),
                        "display_name": "U", "handle": f"u{i}", "balance": 1}
                       for i in range(1000)]
         start = time.perf_counter()
-        build_state(f)
-        elapsed = time.perf_counter() - start
-        print(f"\n1000-user fixture build: {elapsed:.2f} s", flush=True)
+        state = build_state(f)
+        return state, time.perf_counter() - start
+
+    def test_thousand_user_reset_timing_shared_password(self):
+        state, elapsed = self.thousand_users(lambda i: "correct horse")
+        print(f"\n1000-user fixture build, one password: {elapsed:.2f} s", flush=True)
+        self.assertEqual(len({u.pw_hash for u in state.users.values()}), 1)
+        self.assertLess(elapsed, 1)
+
+    def test_thousand_user_reset_timing_distinct_passwords(self):
+        state, elapsed = self.thousand_users(lambda i: f"password {i}")
+        print(f"\n1000-user fixture build, distinct passwords: {elapsed:.2f} s", flush=True)
+        self.assertEqual(len({u.pw_hash for u in state.users.values()}), 1000)
         self.assertLess(elapsed, 10)
+
+
+class FixturePasswordTests(ServiceCase):
+    """D-208: one hash per distinct fixture password; salts never shared across passwords."""
+
+    def test_shared_password_shares_hash_and_everyone_logs_in(self):
+        users = self.store.state.users
+        self.assertEqual(users["u_ada"].pw_hash, users["u_bob"].pw_hash)
+        for email in ("ada@example.com", "bob@example.com", "cy@example.com"):
+            self.login(email)
+
+    def test_distinct_passwords_get_distinct_salts(self):
+        hashes = passwords.hash_many(["a long one", "b long one", "a long one", "c long one"])
+        self.assertEqual(hashes[0], hashes[2])
+        salts = {h.split("$")[4] for h in hashes}
+        self.assertEqual(len(salts), 3)
+        self.assertTrue(passwords.verify_password("b long one", hashes[1]))
+        self.assertFalse(passwords.verify_password("a long one", hashes[1]))
+        self.assertEqual(passwords.hash_many([]), [])
+
+    def test_new_reset_uses_a_new_salt(self):
+        before = self.store.state.users["u_ada"].pw_hash
+        self.call("POST", "/_test/reset", fixture())
+        self.assertNotEqual(self.store.state.users["u_ada"].pw_hash, before)
+
+    def test_signup_gets_its_own_salt(self):
+        status, body = self.call("POST", "/auth/signup", {"email": "dee@x.com",
+                                                          "password": "correct horse",
+                                                          "display_name": "Dee"})
+        self.assertEqual(status, 201)
+        users = self.store.state.users
+        self.assertNotEqual(users[body["user_id"]].pw_hash.split("$")[4],
+                            users["u_ada"].pw_hash.split("$")[4])
+
+    def test_worker_count_respects_cgroup_quota(self):
+        from unittest import mock
+        with mock.patch("builtins.open", mock.mock_open(read_data="200000 100000\n")):
+            self.assertEqual(passwords._quota_cpus(), 2)
+        with mock.patch("builtins.open", mock.mock_open(read_data="max 100000\n")):
+            self.assertIsNone(passwords._quota_cpus())
+        self.assertGreaterEqual(passwords.usable_cpus(), 1)
 
 
 class HttpServerTests(unittest.TestCase):
