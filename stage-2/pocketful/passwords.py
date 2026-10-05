@@ -17,7 +17,7 @@ N, R, P = 2 ** 11, 8, 1
 # D-215: fixture-seeded users may use a cheaper cost so a 1000-user reset with
 # distinct passwords fits the 10 s limit in a 2 vCPU container. The cost is
 # stored in each record, so verification always uses the record's own n.
-FIXTURE_N = 2 ** 11
+FIXTURE_N = 2 ** 10  # container: 2^11 measured 6.24-8.34 s for 1000 distinct; 2^10 ~5 ms/hash single-thread
 _DKLEN = 32
 
 
