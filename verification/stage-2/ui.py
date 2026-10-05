@@ -34,6 +34,7 @@ SIGNED_IN_ROUTES = ["/", "/requests", "/split", "/authorizations"]
 PUBLIC_ROUTES = ["/login", "/signup"]
 ALL_ROUTES = SIGNED_IN_ROUTES + PUBLIC_ROUTES
 # One element that proves each screen has rendered.
+EMPTY_MARK = {"/requests": ["empty-requests"], "/authorizations": ["empty-authorizations"]}
 SCREEN_MARK = {"/": "wallet-balance", "/requests": "incoming-list", "/split": "split-amount",
                "/authorizations": "authorization-list", "/login": "login-email",
                "/signup": "signup-email"}
@@ -141,9 +142,16 @@ def set_value(loc, value: str):
 
 def goto(page: Page, route: str, mark: str | None = None):
     page.goto(route)
-    m = mark or SCREEN_MARK.get(route)
+    if mark:
+        expect(tid(page, mark).first).to_be_visible(timeout=10000)
+        return
+    m = SCREEN_MARK.get(route)
     if m:
-        expect(tid(page, m).first).to_be_visible(timeout=10000)
+        # a screen is ready when its list or its empty-state element exists; an empty
+        # list container may legitimately have zero height or be replaced by empty-*
+        alts = [m] + EMPTY_MARK.get(route, [])
+        css = ", ".join(f'[data-testid="{x}"]' for x in alts)
+        expect(page.locator(css).first).to_be_attached(timeout=10000)
 
 
 def sign_in(page: Page, email: str, password: str = PW):

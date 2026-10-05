@@ -135,19 +135,22 @@ def test_stale_pay_button_after_cancel_elsewhere(page):
 
 @L("S-214", "R-251")
 def test_stale_decline_and_cancel_buttons(page):
+    """Each stale action is clicked before any reload; a refusal reloads the lists."""
     w = pf.world(rich_fixture())
     sign_in_as(page, w, "ada", "/requests")
+    expect(tid(page, "request-cancel-rq_3")).to_be_visible()
+    ok(pf2.void(w.bob, "a_2"))                            # free bob's held funds
+    ok(w.bob.pay_request("rq_3"), 201)                   # bob pays ada's outgoing rq_3
+    tid(page, "request-cancel-rq_3").click()
+    expect(tid(page, "request-error")).to_be_visible()
+    expect(item(page, "request", "rq_3")).to_have_attribute("data-status", "paid")
+    expect(tid(page, "request-cancel-rq_3")).to_have_count(0)
     expect(tid(page, "request-decline-rq_1")).to_be_visible()
     ok(w.bob.post("/requests/rq_1/cancel", {}))
-    ok(w.bob.pay_request("rq_3"), 201)                   # bob pays ada's outgoing rq_3
     tid(page, "request-decline-rq_1").click()
     expect(tid(page, "request-error")).to_be_visible()
     expect(item(page, "request", "rq_1")).to_have_attribute("data-status", "cancelled")
     expect(tid(page, "request-decline-rq_1")).to_have_count(0)
-    tid(page, "request-cancel-rq_3").click()
-    expect(item(page, "request", "rq_3")).to_have_attribute("data-status", "paid")
-    expect(tid(page, "request-cancel-rq_3")).to_have_count(0)
-    expect(tid(page, "request-error")).to_be_visible()
 
 
 @L("R-251")
