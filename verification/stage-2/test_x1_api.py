@@ -43,7 +43,8 @@ def test_stage2_folder_and_stage1_untouched():
 
 @L("R-201")
 def test_ui_assets_served_locally():
-    html = Api().get("/", headers={"Accept": "text/html"})
+    # raw client: an HTML screen is not subject to the JSON-API conventions (R-07/S-16)
+    html = pf._shared.get(pf.BASE + "/", headers={"Accept": "text/html"})
     assert html.status_code == 200 and "text/html" in html.headers.get("content-type", "")
     text = html.text
     ext = re.findall(r"""(?:src|href)\s*=\s*["'](https?:)?//[^"']+""", text, re.I)
