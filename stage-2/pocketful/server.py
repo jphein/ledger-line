@@ -6,6 +6,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 from .app import Request, dispatch
 from .jsonio import encode
 from .state import Store
+from .ui import Raw
 
 MAX_BODY = 8 * 1024 * 1024
 
@@ -78,8 +79,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        payload = encode(body)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        if isinstance(body, Raw):
+            payload, content_type = body.data, body.content_type
+            self.send_header("Cache-Control", "no-cache")
+        else:
+            payload, content_type = encode(body), "application/json; charset=utf-8"
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)

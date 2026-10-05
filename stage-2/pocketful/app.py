@@ -8,7 +8,7 @@ import sys
 import traceback
 
 from . import (auth, authorizations, fixture, money_requests, payments, settlements, snapshot,
-               splits)
+               splits, ui)
 from .errors import ApiError, not_found
 from .jsonio import parse_body
 
@@ -99,6 +99,9 @@ def _match(method, path):
 def dispatch(store, req):
     """Return (status, body-or-None) for one request; never raises."""
     try:
+        page = ui.serve(req)
+        if page is not None:
+            return page
         handler, needs_auth, params = _match(req.method, req.path)
         req.params = params
         token = auth.bearer_token(store, req.headers) if needs_auth else None

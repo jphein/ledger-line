@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{title}} · Pocketful</title>
+  <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-screen="{{screen}}">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/"><img src="/static/logo.svg" alt="" width="28" height="28"><span>Pocketful</span></a>
+      <nav class="nav" id="nav" aria-label="Main" hidden>
+        <a href="/" data-nav="wallet">Wallet</a>
+        <a href="/requests" data-nav="requests">Requests</a>
+        <a href="/split" data-nav="split">Split</a>
+        <a href="/authorizations" data-nav="authorizations">Holds</a>
+      </nav>
+      <div class="account" id="account" hidden></div>
+    </div>
+  </header>
+  <main id="main" class="page" tabindex="-1">
+    <p class="state-loading loading-line" role="status">Loading…</p>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
