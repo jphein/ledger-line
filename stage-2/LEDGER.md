@@ -161,6 +161,7 @@ split and authorizations screens, product/visual quality, upgrade-in-browser.
 - D-212 `GET /authorizations` envelope key is `"authorizations"` (our choice, by analogy with `requests`/`payments`).
 - D-213 Decimal inputs: trim surrounding whitespace; accept only `^\d+(\.\d{1,mu})?$` (no dot at all when mu=0); so `15.`, `.5`, `1e3`, `-1`, `1,5`, `+1` and empty are rejected with the form's error element and no request. Parse with integer/string arithmetic; never `parseFloat`.
 - D-214 Visual proxies (measured by the prover, judged with auditor screenshot review): R-265 `document.documentElement.scrollWidth <= innerWidth` on every required route at 375 px and 1280 px; R-266 every input has an associated `<label>`, `:focus-visible` has a visible outline, palette text contrast ≥ 4.5:1; R-260 `wallet-available` has the largest font size of any money on `/` when holds exist; R-263 each listed state maps to a distinct CSS class documented once in the stylesheet.
+- D-215 If the container's per-hash cost puts 1000 distinct fixture passwords over 10 s, fixture-seeded users get a cheaper scrypt n (largest power of two keeping 1000 distinct passwords under about 7 s in the 2 vCPU container); the hash string records its parameters so login verifies; signups keep n=2^11; base image stays python:3.12-alpine (fixed by the human).
 - D-210 Refresh: each refresh carries a monotonically increasing sequence number; a response is applied only if its sequence is the latest issued (latest refresh wins).
 
 ## Stage 2 work items (every stage-2 line belongs to exactly one)
