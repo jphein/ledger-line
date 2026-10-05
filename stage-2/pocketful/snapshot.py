@@ -12,7 +12,7 @@ from decimal import Decimal
 from . import passwords
 from .errors import invalid
 from .fields import HANDLE_RE, VISIBILITIES, integral_value
-from .fixture import AUTH_STATUSES, MAX_BALANCE, MAX_TTL_SECONDS, MINOR_UNITS, STATUSES
+from .fixture import AUTH_STATUSES, MAX_BALANCE, MINOR_UNITS, STATUSES
 from .state import State, User, parse_rfc3339_us
 
 TRACK, FORMAT_VERSION = "pocketful", 1
@@ -180,7 +180,7 @@ def build_state(doc):
     # Stage-2 additions; a stage-1 export has neither and gets the defaults (D-207).
     if "authorization_ttl_seconds" in raw:
         state.ttl_seconds = _get(raw, "authorization_ttl_seconds", int)
-        if not 1 <= state.ttl_seconds <= MAX_TTL_SECONDS:
+        if state.ttl_seconds < 1:
             raise invalid("authorization_ttl_seconds out of range")
     for a in _get(raw, "authorizations", list) if "authorizations" in raw else []:
         record, expiry = _authorization(a, state.users)

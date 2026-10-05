@@ -45,6 +45,16 @@
     anchor.append(el("p", { class: `notice ${state}`, testid, role, text }));
   }
 
+  /** Unknown outcomes are not refusals: they never use a form's *-error element. */
+  function showUncertain(anchor, text) {
+    clearUncertain(anchor);
+    anchor.append(el("p", { class: "notice state-uncertain uncertain-note", role: "status", text }));
+  }
+
+  function clearUncertain(anchor) {
+    for (const node of anchor.querySelectorAll(".uncertain-note")) node.remove();
+  }
+
   function clearMessage(...testids) {
     for (const testid of testids) {
       const node = byTestId(testid);
@@ -180,6 +190,22 @@
 
   function main() { return document.getElementById("main"); }
 
+  /**
+   * Every item of a paged list endpoint: pages limit=200 while has_more (R-245).
+   * Returns the api() result shape with all items under `field`.
+   */
+  async function loadAll(path, field) {
+    const items = [];
+    for (let offset = 0; ;) {
+      const sep = path.includes("?") ? "&" : "?";
+      const res = await api("GET", `${path}${sep}limit=200&offset=${offset}`);
+      if (res.kind !== "ok") return res;
+      items.push(...res.data[field]);
+      if (!res.data.has_more || !res.data[field].length) return { kind: "ok", data: { [field]: items } };
+      offset += res.data[field].length;
+    }
+  }
+
   /* ---------- signup and login ---------- */
 
   function authScreen(kind) {
@@ -293,7 +319,7 @@
     const seq = ++refreshSeq;
     const button = byTestId("wallet-refresh");
     if (button) button.classList.add("state-loading");
-    const [me, feed] = await Promise.all([api("GET", "/me"), api("GET", "/activity?limit=50")]);
+    const [me, feed] = await Promise.all([api("GET", "/me"), loadAll("/activity", "payments")]);
     if (seq !== refreshSeq) return;  // a later refresh was issued: it wins (D-210)
     if (me.kind === "ok") {
       session.me = me.data;
@@ -361,6 +387,7 @@
     form.addEventListener("submit", async event => {
       event.preventDefault();
       clearMessage("request-error");
+      clearUncertain(form);
       const minor = parseAmount(amount.value);
       if (minor === null) {
         showMessage(form, "request-error", "state-refused",
@@ -375,9 +402,8 @@
         flash(form, `Asked ${result.data.payer_handle} for ${money(result.data.amount)}.`);
         await refreshWallet();
       } else {
-        showMessage(form, "request-error", result.kind === "refused" ? "state-refused" : "state-uncertain",
-          result.kind === "refused" ? refusalText(result.error)
-            : "We couldn't confirm this request. Press Request money again to retry safely.");
+        if (result.kind === "refused") showMessage(form, "request-error", "state-refused", refusalText(result.error));
+        else showUncertain(form, "We couldn't confirm this request. Press Request money again to retry safely.");
       }
     });
     return el("section", { class: "card", "aria-labelledby": "request-title" },
@@ -401,6 +427,7 @@
     form.addEventListener("submit", async event => {
       event.preventDefault();
       clearMessage("authorize-error");
+      clearUncertain(form);
       const minor = parseAmount(amount.value);
       if (minor === null) {
         showMessage(form, "authorize-error", "state-refused",
@@ -414,9 +441,8 @@
       if (result.kind === "ok") {
         flash(form, `Holding ${money(result.data.amount)} for ${result.data.to_handle} until ${when(result.data.expires_at)}.`);
       } else {
-        showMessage(form, "authorize-error", result.kind === "refused" ? "state-refused" : "state-uncertain",
-          result.kind === "refused" ? refusalText(result.error)
-            : "We couldn't confirm this hold. Press Place hold again to retry safely.");
+        if (result.kind === "refused") showMessage(form, "authorize-error", "state-refused", refusalText(result.error));
+        else showUncertain(form, "We couldn't confirm this hold. Press Place hold again to retry safely.");
         if (result.kind !== "refused") return;
       }
       await refreshWallet();
@@ -428,7 +454,7 @@
   }
 
   async function walletScreen() {
-    const feed = await api("GET", "/activity?limit=50");
+    const feed = await loadAll("/activity", "payments");
     const activity = el("div", { id: "activity-slot" });
     main().replaceChildren(
       el("h1", { class: "page-title", text: `Hi, ${session.me.display_name}` }),
@@ -488,8 +514,8 @@
     async function load() {
       const seq = ++loadSeq;
       const [incoming, outgoing] = await Promise.all([
-        api("GET", "/requests?direction=incoming&limit=200"),
-        api("GET", "/requests?direction=outgoing&limit=200")]);
+        loadAll("/requests?direction=incoming", "requests"),
+        loadAll("/requests?direction=outgoing", "requests")]);
       if (seq !== loadSeq) return;
       if (incoming.kind !== "ok" || outgoing.kind !== "ok") {
         lists.replaceChildren(el("p", { class: "notice state-uncertain", role: "alert",
@@ -513,6 +539,7 @@
     }
     async function act(button, action, id) {
       clearMessage("request-error");
+      clearUncertain(banner);
       busy(button, true);
       const result = action === "pay"
         ? await api("POST", `/requests/${encodeURIComponent(id)}/pay`, {}, actionKey("pay:" + id))
@@ -522,9 +549,8 @@
         flash(banner, action === "pay" ? `Paid ${money(result.data.amount)} to ${result.data.to_handle}.`
           : action === "decline" ? "Request declined." : "Request cancelled.");
       } else {
-        showMessage(banner, "request-error", result.kind === "refused" ? "state-refused" : "state-uncertain",
-          result.kind === "refused" ? refusalText(result.error)
-            : "We couldn't confirm that. Press the button again to retry safely.");
+        if (result.kind === "refused") showMessage(banner, "request-error", "state-refused", refusalText(result.error));
+        else showUncertain(banner, "We couldn't confirm that. Press the button again to retry safely.");
       }
       await load();
     }
@@ -579,6 +605,7 @@
     form.addEventListener("submit", async event => {
       event.preventDefault();
       clearMessage("split-error");
+      clearUncertain(form);
       const minor = parseAmount(amount.value);
       const people = parseHandles(handles.value);
       if (minor === null || !people.length) {
@@ -591,10 +618,8 @@
       const res = await api("POST", "/splits", { amount: minor, participant_handles: people, note: note.value }, keyFor());
       busy(submit, false);
       if (res.kind !== "ok") {
-        showMessage(form, "split-error", res.kind === "refused" ? "state-refused" : "state-uncertain",
-          res.kind === "refused"
-            ? (res.error.code === "validation_failed" ? "Check the amount and use each handle only once." : refusalText(res.error))
-            : "We couldn't confirm this split. Press Send requests again to retry safely.");
+        if (res.kind === "refused") showMessage(form, "split-error", "state-refused", (res.error.code === "validation_failed" ? "Check the amount and use each handle only once." : refusalText(res.error)));
+        else showUncertain(form, "We couldn't confirm this split. Press Send requests again to retry safely.");
         return;
       }
       const asked = res.data.requests.map(r => r.payer_handle);
@@ -647,7 +672,7 @@
     let loadSeq = 0;
     async function load() {
       const seq = ++loadSeq;
-      const res = await api("GET", "/authorizations?limit=200");
+      const res = await loadAll("/authorizations", "authorizations");
       if (seq !== loadSeq) return;
       if (res.kind !== "ok") {
         listSlot.replaceChildren(el("p", { class: "notice state-uncertain", role: "alert",
@@ -662,6 +687,7 @@
     }
     async function act(button, action, a, input) {
       clearMessage("authorization-error");
+      clearUncertain(banner);
       const id = a.authorization_id;
       let result;
       if (action === "capture") {
@@ -683,9 +709,8 @@
         flash(banner, action === "capture" ? `Collected ${money(result.data.amount)} from ${result.data.from_handle}.`
           : "Hold released. The money is available again.");
       } else {
-        showMessage(banner, "authorization-error", result.kind === "refused" ? "state-refused" : "state-uncertain",
-          result.kind === "refused" ? refusalText(result.error)
-            : "We couldn't confirm that. Press the button again to retry safely.");
+        if (result.kind === "refused") showMessage(banner, "authorization-error", "state-refused", refusalText(result.error));
+        else showUncertain(banner, "We couldn't confirm that. Press the button again to retry safely.");
       }
       await load();
     }
@@ -724,7 +749,7 @@
     }
     session.me = me.data;
     renderShell(screen);
-    await SCREENS[screen]();
+    await (SCREENS[screen] || walletScreen)();
   }
 
   boot();

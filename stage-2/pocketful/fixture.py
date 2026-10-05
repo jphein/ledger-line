@@ -14,7 +14,6 @@ from .state import DEFAULT_TTL_SECONDS, State, User, now_rfc3339, parse_rfc3339_
 MINOR_UNITS = (0, 2, 3)
 STATUSES = ("pending", "paid", "declined", "cancelled")
 AUTH_STATUSES = ("open", "captured", "voided", "expired")
-MAX_TTL_SECONDS = 10 ** 10
 MAX_BALANCE = 2 ** 53
 
 
@@ -159,7 +158,7 @@ def _ttl(body):
     if "authorization_ttl_seconds" not in body:
         return DEFAULT_TTL_SECONDS
     ttl = integral_value(body["authorization_ttl_seconds"])
-    if ttl is None or not 1 <= ttl <= MAX_TTL_SECONDS:
+    if ttl is None or ttl < 1:
         raise invalid("authorization_ttl_seconds must be a positive integer")
     return ttl
 

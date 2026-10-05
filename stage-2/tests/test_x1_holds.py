@@ -207,6 +207,13 @@ class ExpiryTests(HoldCase):
                          409, "authorization_expired")
         self.assertError(self.void(slow["authorization_id"]), 409, "authorization_not_open")
 
+    def test_huge_ttl_is_valid_and_clamped(self):
+        self.reset_with(authorization_ttl_seconds=10 ** 12)
+        status, a = self.authorize(100, key="big")
+        self.assertEqual(status, 201, a)
+        self.assertTrue(a["expires_at"].startswith("9999-12-31"))
+        self.assertEqual(self.me("ada")["held"], 100)
+
     def test_seeded_authorizations(self):
         self.reset_with(authorizations=[
             {"id": "a_open", "from_user_id": "u_ada", "to_user_id": "u_bob", "amount": 2000,

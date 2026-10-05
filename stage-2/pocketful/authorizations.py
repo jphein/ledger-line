@@ -17,6 +17,7 @@ from .state import now_us, parse_rfc3339_us
 STATUSES = ("open", "captured", "voided", "expired")
 DIRECTIONS = ("incoming", "outgoing")
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_LAST = datetime(9999, 12, 31, tzinfo=timezone.utc)
 
 
 def _not_open():
@@ -41,7 +42,8 @@ def _create(state, user, body):
     if state.available(user) < amount:
         raise insufficient()
     created = _EPOCH + timedelta(milliseconds=now_us() // 1000)
-    expires = created + timedelta(seconds=state.ttl_seconds)
+    # Any positive ttl is valid; expiry is clamped to the last representable day.
+    expires = created + timedelta(seconds=min(state.ttl_seconds, (_LAST - created).total_seconds()))
     auth_id = state.new_id("a_", state.authorizations)
     record = {
         "authorization_id": auth_id,
