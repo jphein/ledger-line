@@ -10,7 +10,7 @@ split and authorizations screens, product/visual quality, upgrade-in-browser.
 ## Stage 2 requirements
 
 ### Delivery [X1]
-- R-200 `stage-2/` is a copy of `stage-1/` (no `.git`), extended; nothing under `stage-1/` changes. stage-2 still satisfies every carried-forward stage 1 line (R-00..R-101, I-01..I-08, S-01..S-24) except where amended below.
+- R-200 (amends R-01: the Dockerfile, RUN.md and build command live in and build from `stage-2/`) `stage-2/` is a copy of `stage-1/` (no `.git`), extended; nothing under `stage-1/` changes. stage-2 still satisfies every carried-forward stage 1 line (R-00..R-101, I-01..I-08, S-01..S-24) except where amended below.
 - R-201 Every UI asset (CSS, JS, fonts, icons) is served from the image; no CDNs, no external fonts or scripts.
 - R-202 Carried-forward defect from stage 1, now required: S-23 "Large-fixture reset (1000 users) completes under 10 s" measured **in the 2 vCPU / 2 GiB container** (stage 1 measured 14–18 s there).
 
@@ -47,7 +47,7 @@ split and authorizations screens, product/visual quality, upgrade-in-browser.
 - R-224 Default (final): authorisation becomes `captured`, carries `captured_amount` and `payment_id`, and "releases the uncaptured remainder immediately" in the same step. A second capture after a final capture -> 409 `authorization_not_open`.
 - R-225 Extended mode `{"amount": 700, "final": false}`: `final` is boolean, default `true`; with an uncaptured remainder status stays `open`; further captures allowed up to the remainder; "Capturing the entire remainder closes it even with `final: false`." "A final capture closes it and releases any remainder."
 - R-226 "`capture_exceeds_authorization` compares with the **remaining** amount; omitted amount defaults to that remainder. `captured_amount` is cumulative; `payment_id` is the latest capture; `payment_ids` lists every capture in order. Every authorization response adds `remaining_amount`: the amount still held, zero when closed."
-- R-227 "New fields do not change idempotency body equality." (replay bodies stay the stored original)
+- R-227 "New fields do not change idempotency body equality." Request-body equality stays raw JSON-value equality: `{"amount":700}` vs `{"amount":700,"final":true}` -> 409 `idempotency_key_reuse` (like `{}` vs `{"amount":2000}`); "new fields" are the added response fields, which never change a stored replay body.
 - R-228 Capture errors: not `open` -> 409 `authorization_not_open`; `expires_at` at or before now -> 409 `authorization_expired`; amount above remainder -> 422 `capture_exceeds_authorization`; amount <1 or non-integer -> 422 `validation_failed`; caller not receiver (incl. third parties) -> 403; unknown -> 404.
 
 ### `POST /authorizations/{id}/void` [X1]
@@ -77,7 +77,7 @@ split and authorizations screens, product/visual quality, upgrade-in-browser.
 - R-240 `pay-handle`, `pay-amount` (decimal string, e.g. `15.00`), `pay-note`, `pay-visibility` (select, option values `public`/`private`), `pay-submit`, `pay-error` "when the payment is refused — including insufficient funds".
 - R-241 `request-handle`, `request-amount`, `request-note`, `request-submit`, `request-error` "when the request is refused".
 - R-242 "Keep the pay form's values after success. Submitting it again without changing a field must not send another payment: `wallet-balance` falls once, the feed contains one payment and `pay-error` is absent. Changing a field makes the next submission a new payment request. Retries follow §7."
-- R-243 Formatted amount: "the decimal with exactly `minor_units` decimal places, a single space, then the currency code: `100.00 EUR`. For a `minor_units` of `0` there is no decimal point at all: `1200 JPY`." (BHD: `1.250 BHD`; `5` minor units at 2 -> `0.05 EUR`.)
+- R-243 Formatted amount: "the decimal with exactly `minor_units` decimal places, a single space, then the currency code: `100.00 EUR`. For a `minor_units` of `0` there is no decimal point at all: `1200 JPY`." (BHD: `1.250 BHD`; `5` minor units at 2 -> `0.05 EUR`.) No grouping separators, no sign, no locale formatting (`Intl.NumberFormat`/`toLocaleString` forbidden for money); format from the integer with string arithmetic, never floats.
 - R-244 Decimal input: "`15.00` and `15` both submit `1500`; `15.5` submits `1550`. Nonnumeric input or more than `minor_units` decimal places must show the form's error element without sending a request. For example, `15.005` is rejected rather than rounded." Applies to pay, request, split, authorize and capture inputs.
 
 ### Activity feed [X2]
@@ -109,7 +109,7 @@ split and authorizations screens, product/visual quality, upgrade-in-browser.
 - R-260 "Available funds must be the clearest monetary value once holds exist, with total and held funds visibly secondary."
 - R-261 "Payments, requests, splits and authorisations should be easy to scan, and status, direction, privacy and money movement should be understandable without interpreting raw API data."
 - R-262 "consistent visual system for typography, spacing, colour, controls and feedback. Primary actions must be easy to identify."
-- R-263 "Available, held, pending, loading, successful, refused and uncertain states must be visually distinct".
+- R-263 "Available, held, pending, loading, successful, refused and uncertain states must be visually distinct as well as satisfying the behavioural requirements below".
 - R-264 "Format people, amounts and timestamps for people first; expose technical identifiers only where they help the user." (display names / handles, formatted money, human dates; `authorization-expires` keeps RFC 3339 text per R-257)
 - R-265 "clear and usable at a 375 CSS-pixel viewport and at conventional desktop widths, without horizontal page scrolling."
 - R-266 "Inputs need visible labels, keyboard focus must be apparent, and text and controls need sufficient contrast." (WCAG AA 4.5:1 for text)
@@ -138,6 +138,9 @@ split and authorizations screens, product/visual quality, upgrade-in-browser.
 - S-211 Seeded expired-by-clock open holds are excluded from the R-215 sum ("unexpired open holds").
 - S-212 After logout, protected screens send the user to login (no stale `current-user`).
 - S-213 Unauthenticated visit to `/`, `/requests`, `/split`, `/authorizations` shows or redirects to login, never a raw JSON 401.
+- S-215 A 1000-user fixture with all-distinct passwords resets in < 10 s in the 2 vCPU container (over HTTP).
+- S-216 ttl=1 in the fixture: authorise then capture immediately -> 201; capture after 1.5 s -> 409 `authorization_expired`.
+- S-217 Fixture authorisation validation: unknown from/to user, from == to, amount outside 1..1000000000 or non-integral, bad visibility/status, non-RFC 3339 `expires_at`, duplicate id, non-positive/non-integral `authorization_ttl_seconds` -> 422 `validation_failed`, nothing changed. Seeded `captured` without `captured_amount` defaults per D-206.
 - S-214 A stale request pay button (request cancelled elsewhere) -> `request-error` and the list refreshes (R-252); same pattern for a stale capture/void button -> `authorization-error` and refresh.
 
 ## Stage 2 boundary
@@ -147,21 +150,26 @@ split and authorizations screens, product/visual quality, upgrade-in-browser.
 - D-200 UI: server-served static HTML shells plus one same-origin JS file per screen (or one shared), plain CSS, no build step; the JS calls the JSON API with the bearer token kept in `localStorage`, so a stage-1 token stays valid in the browser across import (R-232). HTML shells need no auth; JS redirects to `/login` when no/invalid token.
 - D-201 Content negotiation: a GET whose `Accept` contains `text/html` on `/`, `/requests`, `/split`, `/signup`, `/login`, `/authorizations` serves HTML; otherwise the API (JSON). `/`, `/split`, `/signup`, `/login` have no JSON API — non-HTML requests to them keep stage 1 behaviour (404 JSON).
 - D-202 Expiry is evaluated lazily on every read and write under the lock using the current clock; an open authorisation with `expires_at ≤ now` is treated as `expired` everywhere (and may be persisted as expired). Held = Σ remaining of effectively-open authorisations.
-- D-203 Capture order: auth 401 -> body JSON object 400 -> key 400/422 -> claimed-key resolution -> field rules (`amount` 422 rules, `final` non-bool 400) -> 404 -> 403 -> status: voided/captured 409 `authorization_not_open`, expired (clock or seeded) 409 `authorization_expired` -> 422 `capture_exceeds_authorization` -> effect.
-- D-204 Void order: 404 -> 403 -> voided 200 current -> captured/expired 409 `authorization_not_open` -> void.
-- D-205 `created_at` of an authorisation is the current time truncated to whole seconds; `expires_at = created_at + ttl` exactly, so the displayed values are consistent with expiry behaviour.
+- D-203 Capture order: auth 401 -> body JSON object 400 -> key 400/422 -> claimed-key resolution -> field rules (`amount` 422 rules, `final` non-bool 400) -> 404 -> 403 -> status: voided/captured 409 `authorization_not_open`, expired (clock or seeded) 409 `authorization_expired` -> 422 `capture_exceeds_authorization` -> effect. The capture amount is checked for type, integral value and ≥ 1 only (spec row: "below 1, or not an integer"); anything above the remainder, including > 1000000000, is `capture_exceeds_authorization`, and that check comes after the status checks.
+- D-204 Void order: 404 -> 403 -> voided 200 current -> captured/expired 409 `authorization_not_open` (spec: "A `captured` or `expired` one is `409 authorization_not_open`") -> void. Capture on expired gives `authorization_expired` (D-203); these two are intentionally different.
+- D-205 (revised) Authorisation `created_at`/`expires_at` are emitted as RFC 3339 with milliseconds (e.g. `2026-09-24T13:10:00.123+00:00`); `expires_at = created_at + ttl` exactly and the real lifetime equals the ttl (no truncation).
 - D-206 Authorisation responses always include `captured_amount`, `remaining_amount`, `payment_id`, `payment_ids`. Seeded authorisations may omit `captured_amount` (0), `payment_id`/`payment_ids` (null/[]).
 - D-207 Export keeps `format_version: 1`; import accepts a stage-1 state (no authorizations, no ttl) and fills defaults (empty, 600).
-- D-208 S-23 fix: hash each distinct fixture password once per reset (shared salt among users with an identical password within that fixture), in a thread pool, outside the lock; verify in the 2 vCPU container. Users created later get their own salt.
+- D-208 S-23 fix (revised after challenge): (a) measure the cause in the 2 vCPU container first (does hashlib.scrypt on python:3.12-alpine run in parallel / release the GIL; per-hash cost); (b) choose cost parameters so **1000 distinct passwords** reset in < 10 s in the container over HTTP; (c) keep per-user salts. Dedup of identical passwords is allowed only as an optimisation, stored per user as `sha256(user_salt ‖ scrypt(pw, shared_salt))` so records never reveal equal passwords.
 - D-209 Pay form: the JS keeps `{key, body}` for the current form contents; it reuses the key while the canonical body is unchanged (including after success, so a resubmit is a 200 replay and moves nothing) and mints a new key (`crypto.randomUUID`, fallback random) when any field changes.
+- D-211 Imported stage-1 payments carry `authorization_id: null` on every read (feed, capture shapes); stored stage-1 idempotency responses replay exactly as stored (§7 "body identical to the original response"), never rewritten.
+- D-212 `GET /authorizations` envelope key is `"authorizations"` (our choice, by analogy with `requests`/`payments`).
+- D-213 Decimal inputs: trim surrounding whitespace; accept only `^\d+(\.\d{1,mu})?$` (no dot at all when mu=0); so `15.`, `.5`, `1e3`, `-1`, `1,5`, `+1` and empty are rejected with the form's error element and no request. Parse with integer/string arithmetic; never `parseFloat`.
+- D-214 Visual proxies (measured by the prover, judged with auditor screenshot review): R-265 `document.documentElement.scrollWidth <= innerWidth` on every required route at 375 px and 1280 px; R-266 every input has an associated `<label>`, `:focus-visible` has a visible outline, palette text contrast ≥ 4.5:1; R-260 `wallet-available` has the largest font size of any money on `/` when holds exist; R-263 each listed state maps to a distinct CSS class documented once in the stylesheet.
 - D-210 Refresh: each refresh carries a monotonically increasing sequence number; a response is applied only if its sequence is the latest issued (latest refresh wins).
 
 ## Stage 2 work items (every stage-2 line belongs to exactly one)
-- X1 Copy + S-23 fix + holds/authorizations API + upgrade import: R-200..R-234 (R-232 browser half goes with X3), I-200..I-204, S-209..S-211, D-202..D-208. Also re-proves all carried-forward stage 1 lines on stage-2/.
-- X2 UI shell, auth screens, wallet home, feed, refresh, uncertainty: R-235..R-250, S-200..S-203, S-207, S-208, S-212, S-213, I-205, D-200, D-201, D-209, D-210.
-- X3 Requests, split, authorizations screens, product/visual quality, upgrade in browser: R-232 (browser), R-251..R-267, S-204..S-206, S-214.
+- X1 Copy + S-23 fix + holds/authorizations API + upgrade import: R-200..R-234 (R-232 browser half goes with X3), I-200..I-204, S-209..S-211, S-215..S-217, D-202..D-208, D-211, D-212. Also re-proves all carried-forward stage 1 lines on stage-2/.
+- X2 UI shell, auth screens, wallet home, feed, refresh, uncertainty: R-235..R-250, S-200..S-203, S-207, S-208, S-212, S-213, I-205, D-200, D-201, D-209, D-210, D-213.
+- X3 Requests, split, authorizations screens, product/visual quality, upgrade in browser: R-232 (browser), R-251..R-267, S-204..S-206, S-214, D-214.
 
 ## Decision log (stage 2)
+- 17:36 Auditor challenge merged (13 points): D-208 rewritten (distinct passwords, per-user salts, measured in container), D-205 milliseconds, D-203 capture amount rule, D-204 quote, D-211..D-214, S-215..S-217, R-200 amends R-01, R-227/R-243/R-263 sharpened.
 - 17:35 Ledger written; stage 1 ledger carried forward below. Stage 1 judged revision d0b69b4 passed 440/441 of the prover suite; S-23 failed in the container (14–18 s) → R-202 makes it a stage 2 requirement, fix D-208.
 
 ---
