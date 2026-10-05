@@ -3,8 +3,9 @@
 hashlib.scrypt releases the GIL, so hashing runs outside the global lock and a
 large reset hashes on a thread pool sized to the CPUs the process may actually
 use: inside a container os.cpu_count() reports the host, not the cgroup quota.
-A reset hashes each distinct fixture password once; users sharing a password
-within that fixture share its salt. Signups always get their own salt.
+A reset runs scrypt once per distinct fixture password and stores each user as
+sha256(user_salt || scrypt(pw, shared_salt)), so records stay per-user (D-208).
+Signups always get a plain scrypt hash with their own salt.
 """
 import hashlib
 import hmac
@@ -56,18 +57,32 @@ def hash_password(password):
     return f"scrypt${N}${R}${P}${salt.hex()}${digest.hex()}"
 
 
+def _scrypt_once(password):
+    """One scrypt per distinct fixture password: (shared salt, derived key)."""
+    shared_salt = os.urandom(16)
+    return shared_salt, _derive(password, shared_salt, N, R, P)
+
+
+def _wrap(shared_salt, derived):
+    """Per-user record over a shared derivation: sha256(user_salt || scrypt key)."""
+    user_salt = os.urandom(16)
+    digest = hashlib.sha256(user_salt + derived).digest()
+    return (f"scrypt-sha256${N}${R}${P}${shared_salt.hex()}${user_salt.hex()}"
+            f"${digest.hex()}")
+
+
 def hash_many(passwords):
-    """Hash a fixture's passwords: one scrypt per distinct password (D-208)."""
+    """Hash a fixture's passwords (D-208): one scrypt per distinct password, in a
+    pool, then a per-user salted sha256 wrapper so no two records are equal and
+    stored records never reveal that two users share a password."""
     distinct = list(dict.fromkeys(passwords))
-    if not distinct:
-        return []
-    if len(distinct) == 1:
-        hashed = [hash_password(distinct[0])]
+    if len(distinct) <= 1:
+        derived = [_scrypt_once(pw) for pw in distinct]
     else:
         with ThreadPoolExecutor(min(_WORKERS, len(distinct))) as pool:
-            hashed = list(pool.map(hash_password, distinct))
-    by_password = dict(zip(distinct, hashed))
-    return [by_password[password] for password in passwords]
+            derived = list(pool.map(_scrypt_once, distinct))
+    by_password = dict(zip(distinct, derived))
+    return [_wrap(*by_password[password]) for password in passwords]
 
 
 def is_valid_hash(stored):
@@ -79,8 +94,17 @@ def is_valid_hash(stored):
 
 
 def _parse(stored):
-    scheme, n, r, p, salt, digest = stored.split("$")
-    if scheme != "scrypt":
+    """-> (n, r, p, scrypt salt, user salt or None, digest)."""
+    parts = stored.split("$")
+    if parts[0] == "scrypt" and len(parts) == 6:
+        _, n, r, p, salt, digest = parts
+        user_salt = None
+    elif parts[0] == "scrypt-sha256" and len(parts) == 7:
+        _, n, r, p, salt, user_salt, digest = parts
+        user_salt = bytes.fromhex(user_salt)
+        if not user_salt:
+            raise ValueError("bad user salt")
+    else:
         raise ValueError("unknown scheme")
     n, r, p = int(n), int(r), int(p)
     if not (2 <= n <= 2 ** 16 and n & (n - 1) == 0 and 1 <= r <= 16 and 1 <= p <= 4):
@@ -88,9 +112,12 @@ def _parse(stored):
     salt, digest = bytes.fromhex(salt), bytes.fromhex(digest)
     if len(digest) != _DKLEN or not salt:
         raise ValueError("bad digest")
-    return n, r, p, salt, digest
+    return n, r, p, salt, user_salt, digest
 
 
 def verify_password(password, stored):
-    n, r, p, salt, digest = _parse(stored)
-    return hmac.compare_digest(_derive(password, salt, n, r, p), digest)
+    n, r, p, salt, user_salt, digest = _parse(stored)
+    derived = _derive(password, salt, n, r, p)
+    if user_salt is not None:
+        derived = hashlib.sha256(user_salt + derived).digest()
+    return hmac.compare_digest(derived, digest)

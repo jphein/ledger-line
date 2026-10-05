@@ -130,7 +130,7 @@ class AuthTests(ServiceCase):
 
     def test_password_is_hashed(self):
         user = self.store.state.users["u_ada"]
-        self.assertTrue(user.pw_hash.startswith("scrypt$"))
+        self.assertTrue(user.pw_hash.startswith("scrypt-sha256$"))
         self.assertNotIn("correct horse", user.pw_hash)
 
 
@@ -179,7 +179,8 @@ class ScryptTimingTests(unittest.TestCase):
     def test_thousand_user_reset_timing_shared_password(self):
         state, elapsed = self.thousand_users(lambda i: "correct horse")
         print(f"\n1000-user fixture build, one password: {elapsed:.2f} s", flush=True)
-        self.assertEqual(len({u.pw_hash for u in state.users.values()}), 1)
+        self.assertEqual(len({u.pw_hash for u in state.users.values()}), 1000)  # per-user records
+        self.assertEqual(len({u.pw_hash.split("$")[4] for u in state.users.values()}), 1)
         self.assertLess(elapsed, 1)
 
     def test_thousand_user_reset_timing_distinct_passwords(self):
@@ -192,20 +193,32 @@ class ScryptTimingTests(unittest.TestCase):
 class FixturePasswordTests(ServiceCase):
     """D-208: one hash per distinct fixture password; salts never shared across passwords."""
 
-    def test_shared_password_shares_hash_and_everyone_logs_in(self):
+    def test_shared_password_records_are_per_user_and_everyone_logs_in(self):
         users = self.store.state.users
-        self.assertEqual(users["u_ada"].pw_hash, users["u_bob"].pw_hash)
+        self.assertNotEqual(users["u_ada"].pw_hash, users["u_bob"].pw_hash)
         for email in ("ada@example.com", "bob@example.com", "cy@example.com"):
             self.login(email)
+        self.assertError(self.call("POST", "/auth/login", {"email": "ada@example.com",
+                                                           "password": "correct horsf"}),
+                         401, "unauthenticated")
 
-    def test_distinct_passwords_get_distinct_salts(self):
-        hashes = passwords.hash_many(["a long one", "b long one", "a long one", "c long one"])
-        self.assertEqual(hashes[0], hashes[2])
-        salts = {h.split("$")[4] for h in hashes}
-        self.assertEqual(len(salts), 3)
+    def test_one_scrypt_per_distinct_password(self):
+        from unittest import mock
+        with mock.patch.object(passwords, "_derive", wraps=passwords._derive) as derive:
+            hashes = passwords.hash_many(["a long one", "b long one", "a long one", "c long one"])
+        self.assertEqual(derive.call_count, 3)
+        self.assertEqual(len(set(hashes)), 4)
+        self.assertEqual(len({h.split("$")[5] for h in hashes}), 4)  # user salts
+        self.assertTrue(passwords.verify_password("a long one", hashes[2]))
         self.assertTrue(passwords.verify_password("b long one", hashes[1]))
         self.assertFalse(passwords.verify_password("a long one", hashes[1]))
+        self.assertTrue(all(passwords.is_valid_hash(h) for h in hashes))
         self.assertEqual(passwords.hash_many([]), [])
+
+    def test_stage1_plain_scrypt_hash_still_verifies(self):
+        stored = passwords.hash_password("correct horse")
+        self.assertTrue(stored.startswith("scrypt$"))
+        self.assertTrue(passwords.verify_password("correct horse", stored))
 
     def test_new_reset_uses_a_new_salt(self):
         before = self.store.state.users["u_ada"].pw_hash
@@ -218,6 +231,7 @@ class FixturePasswordTests(ServiceCase):
                                                           "display_name": "Dee"})
         self.assertEqual(status, 201)
         users = self.store.state.users
+        self.assertTrue(users[body["user_id"]].pw_hash.startswith("scrypt$"))
         self.assertNotEqual(users[body["user_id"]].pw_hash.split("$")[4],
                             users["u_ada"].pw_hash.split("$")[4])
 
