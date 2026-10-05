@@ -92,10 +92,10 @@ a { color: var(--primary); }
 
 /* Forms */
 .form { display: grid; gap: var(--space-3); }
-.field { display: grid; gap: var(--space-1); }
+.field { display: grid; gap: var(--space-1); align-content: start; }
 .field label { font-weight: 600; font-size: var(--fs-sm); }
 .field .hint { color: var(--text-muted); font-size: var(--fs-xs); }
-.row { display: grid; gap: var(--space-3); grid-template-columns: minmax(0, 1fr); }
+.row { display: grid; gap: var(--space-3); grid-template-columns: minmax(0, 1fr); align-items: start; }
 @media (min-width: 520px) { .row-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 input, select { font: inherit; color: var(--text); background: var(--surface); width: 100%;
                 border: 1px solid #8a94a6; border-radius: var(--radius-sm); padding: 10px 12px; min-height: 44px; }

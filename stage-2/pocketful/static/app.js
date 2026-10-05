@@ -90,7 +90,7 @@
 
   const amountHint = () => session.me.minor_units === 0
     ? `Whole ${session.me.currency}, e.g. 1500`
-    : `In ${session.me.currency}, e.g. ${decimalText(1500 * 10 ** session.me.minor_units, session.me.minor_units)}`;
+    : `In ${session.me.currency}, e.g. ${decimalText(15 * 10 ** session.me.minor_units, session.me.minor_units)}`;
 
   /* ---------- people and time ---------- */
 
@@ -326,7 +326,7 @@
       const minor = parseAmount(amount.value);
       if (minor === null) {
         showMessage(form, "pay-error", "state-refused",
-          `Enter an amount like ${decimalText(1500, session.me.minor_units)}, with at most ${session.me.minor_units} decimal places.`);
+          `Enter an amount like ${decimalText(15 * 10 ** session.me.minor_units, session.me.minor_units)}, with at most ${session.me.minor_units} decimal places.`);
         return;
       }
       const body = { to_handle: handle.value.trim(), amount: minor, note: note.value, visibility: visibility.value };
@@ -364,7 +364,7 @@
       const minor = parseAmount(amount.value);
       if (minor === null) {
         showMessage(form, "request-error", "state-refused",
-          `Enter an amount like ${decimalText(1500, session.me.minor_units)}, with at most ${session.me.minor_units} decimal places.`);
+          `Enter an amount like ${decimalText(15 * 10 ** session.me.minor_units, session.me.minor_units)}, with at most ${session.me.minor_units} decimal places.`);
         return;
       }
       busy(submit, true);
@@ -384,6 +384,49 @@
       el("h2", { id: "request-title", text: "Request money" }), form);
   }
 
+  function authorizeForm() {
+    const handle = el("input", { testid: "authorize-handle", autocomplete: "off", autocapitalize: "none", spellcheck: "false" });
+    const amount = el("input", { testid: "authorize-amount", inputmode: "decimal", autocomplete: "off" });
+    const note = el("input", { testid: "authorize-note", maxlength: "200", autocomplete: "off" });
+    const visibility = el("select", { testid: "authorize-visibility" },
+      el("option", { value: "public", text: "Public when captured" }),
+      el("option", { value: "private", text: "Private — only you and the recipient" }));
+    const submit = el("button", { class: "btn btn-primary", type: "submit", testid: "authorize-submit", text: "Place hold" });
+    const form = el("form", { class: "form", novalidate: true },
+      el("div", { class: "row row-2" }, field("For (handle)", handle), field("Amount to hold", amount, amountHint())),
+      field("Note (optional)", note),
+      field("Who can see it once captured", visibility),
+      el("div", { class: "actions" }, submit));
+    const keyFor = keyedForm(form);
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      clearMessage("authorize-error");
+      const minor = parseAmount(amount.value);
+      if (minor === null) {
+        showMessage(form, "authorize-error", "state-refused",
+          `Enter an amount like ${decimalText(15 * 10 ** session.me.minor_units, session.me.minor_units)}, with at most ${session.me.minor_units} decimal places.`);
+        return;
+      }
+      busy(submit, true);
+      const result = await api("POST", "/authorizations", { to_handle: handle.value.trim(), amount: minor,
+        note: note.value, visibility: visibility.value }, keyFor());
+      busy(submit, false);
+      if (result.kind === "ok") {
+        flash(form, `Holding ${money(result.data.amount)} for ${result.data.to_handle} until ${when(result.data.expires_at)}.`);
+      } else {
+        showMessage(form, "authorize-error", result.kind === "refused" ? "state-refused" : "state-uncertain",
+          result.kind === "refused" ? refusalText(result.error)
+            : "We couldn't confirm this hold. Press Place hold again to retry safely.");
+        if (result.kind !== "refused") return;
+      }
+      await refreshWallet();
+    });
+    return el("section", { class: "card", "aria-labelledby": "authorize-title" },
+      el("h2", { id: "authorize-title", text: "Hold money for someone" }),
+      el("p", { class: "lede", text: "Reserve money now; they collect it later, all at once or in parts. Held money can't be spent until the hold is captured, voided or expires." }),
+      form);
+  }
+
   async function walletScreen() {
     const feed = await api("GET", "/activity?limit=50");
     const activity = el("div", { id: "activity-slot" });
@@ -394,15 +437,270 @@
         el("div", { class: "grid grid-2" }, payForm(), requestForm()),
         el("section", { class: "card", "aria-labelledby": "activity-title" },
           el("div", { class: "section-head" }, el("h2", { id: "activity-title", text: "Activity" })),
-          activity)));
+          activity),
+        authorizeForm()));
     if (feed.kind === "ok") renderActivity(activity, feed.data.payments);
     else activity.replaceChildren(el("p", { class: "notice state-refused", role: "alert",
       text: "We couldn't load your activity. Use Refresh to try again." }));
   }
 
+  /* ---------- requests ---------- */
+
+  const STATUS_CLASS = { pending: "state-pending", paid: "state-success", declined: "state-refused",
+    cancelled: "muted", open: "state-held", captured: "state-success", voided: "muted", expired: "muted" };
+  const STATUS_LABEL = { pending: "Waiting", paid: "Paid", declined: "Declined", cancelled: "Cancelled",
+    open: "Holding", captured: "Captured", voided: "Released", expired: "Expired" };
+
+  function statusBadge(status) {
+    return el("span", { class: `badge ${STATUS_CLASS[status] || "muted"}`, text: STATUS_LABEL[status] || status });
+  }
+
+  /** Per-target idempotency keys: a retried click on the same item reuses its key. */
+  const actionKeys = new Map();
+  const actionKey = id => actionKeys.get(id) || actionKeys.set(id, newKey()).get(id);
+
+  function requestItem(r, incoming, act) {
+    const id = r.request_id;
+    const pending = r.status === "pending";
+    const who = incoming ? `${r.requester_handle} asked you` : `You asked ${r.payer_handle}`;
+    return el("li", { class: `item ${incoming ? "direction-out" : "direction-in"}`, testid: `request-item-${id}`,
+      "data-status": r.status },
+      el("div", { class: "item-main" },
+        el("div", { class: "item-title", text: who }),
+        el("div", { class: "item-note", text: r.note }),
+        el("div", { class: "item-meta" }, statusBadge(r.status),
+          el("time", { datetime: r.created_at, text: when(r.created_at) }))),
+      el("div", { class: "item-amount", testid: `request-amount-${id}`, text: money(r.amount) }),
+      pending ? el("div", { class: "item-actions actions" },
+        incoming ? [
+          el("button", { class: "btn btn-primary btn-small", type: "button", testid: `request-pay-${id}`,
+            text: `Pay ${money(r.amount)}`, onclick: e => act(e.currentTarget, "pay", id) }),
+          el("button", { class: "btn btn-secondary btn-small", type: "button", testid: `request-decline-${id}`,
+            text: "Decline", onclick: e => act(e.currentTarget, "decline", id) }),
+        ] : el("button", { class: "btn btn-danger btn-small", type: "button", testid: `request-cancel-${id}`,
+            text: "Cancel request", onclick: e => act(e.currentTarget, "cancel", id) })) : null);
+  }
+
+  async function requestsScreen() {
+    const banner = el("div");
+    const lists = el("div", { class: "grid grid-2" });
+    let loadSeq = 0;
+    async function load() {
+      const seq = ++loadSeq;
+      const [incoming, outgoing] = await Promise.all([
+        api("GET", "/requests?direction=incoming&limit=200"),
+        api("GET", "/requests?direction=outgoing&limit=200")]);
+      if (seq !== loadSeq) return;
+      if (incoming.kind !== "ok" || outgoing.kind !== "ok") {
+        lists.replaceChildren(el("p", { class: "notice state-uncertain", role: "alert",
+          text: "We couldn't load your requests. Try again in a moment." }));
+        return;
+      }
+      const inc = incoming.data.requests, out = outgoing.data.requests;
+      const column = (title, testid, items, incomingSide, emptyText) =>
+        el("section", { class: "card", "aria-label": title },
+          el("h2", { text: title }),
+          el("ul", { class: "list", testid }, items.map(r => requestItem(r, incomingSide, act))),
+          items.length ? null : el("p", { class: "empty", text: emptyText }));
+      lists.replaceChildren(
+        column("Asked of you", "incoming-list", inc, true, "No one has asked you for money."),
+        column("You asked", "outgoing-list", out, false, "You haven't requested money yet."));
+      clearMessage("empty-requests");
+      if (!inc.length && !out.length) {
+        banner.append(el("p", { class: "empty", testid: "empty-requests",
+          text: "No requests yet. Ask someone for money from your wallet, or split a bill." }));
+      }
+    }
+    async function act(button, action, id) {
+      clearMessage("request-error");
+      busy(button, true);
+      const result = action === "pay"
+        ? await api("POST", `/requests/${encodeURIComponent(id)}/pay`, {}, actionKey("pay:" + id))
+        : await api("POST", `/requests/${encodeURIComponent(id)}/${action}`);
+      busy(button, false);
+      if (result.kind === "ok") {
+        flash(banner, action === "pay" ? `Paid ${money(result.data.amount)} to ${result.data.to_handle}.`
+          : action === "decline" ? "Request declined." : "Request cancelled.");
+      } else {
+        showMessage(banner, "request-error", result.kind === "refused" ? "state-refused" : "state-uncertain",
+          result.kind === "refused" ? refusalText(result.error)
+            : "We couldn't confirm that. Press the button again to retry safely.");
+      }
+      await load();
+    }
+    main().replaceChildren(
+      el("h1", { class: "page-title", text: "Requests" }),
+      el("p", { class: "lede", text: "Money people have asked you for, and money you've asked for." }),
+      banner, lists);
+    lists.append(el("p", { class: "state-loading loading-line", role: "status", text: "Loading requests…" }));
+    await load();
+  }
+
+  /* ---------- split ---------- */
+
+  /** Server rule (stage-1 §9): equal shares, extra units to the first participants. */
+  function equalShares(amount, count) {
+    const base = Math.floor(amount / count), extra = amount - base * count;
+    return Array.from({ length: count }, (_, i) => base + (i < extra ? 1 : 0));
+  }
+
+  function parseHandles(text) {
+    return text.split(",").map(h => h.trim()).filter(Boolean);
+  }
+
+  async function splitScreen() {
+    const amount = el("input", { testid: "split-amount", inputmode: "decimal", autocomplete: "off" });
+    const handles = el("input", { testid: "split-handles", autocomplete: "off", autocapitalize: "none", spellcheck: "false" });
+    const note = el("input", { testid: "split-note", maxlength: "200", autocomplete: "off" });
+    const submit = el("button", { class: "btn btn-primary", type: "submit", testid: "split-submit", text: "Send requests" });
+    const preview = el("div", { class: "preview", testid: "split-preview", "aria-live": "polite" });
+    const form = el("form", { class: "form", novalidate: true },
+      el("div", { class: "row row-2" }, field("Total you paid", amount, amountHint()),
+        field("Split between (handles)", handles, `Comma-separated, in order — include ${session.me.handle} to take a share`)),
+      field("What it was for (optional)", note),
+      el("div", null, el("h3", { text: "Each person pays" }), preview),
+      el("div", { class: "actions" }, submit));
+    const result = el("div");
+    function renderPreview() {
+      const minor = parseAmount(amount.value);
+      const people = parseHandles(handles.value);
+      if (minor === null || !people.length) {
+        preview.replaceChildren(el("p", { class: "hint", style: "margin:0",
+          text: "Enter an amount and at least one handle to see the shares." }));
+        return;
+      }
+      const shares = equalShares(minor, people.length);
+      preview.replaceChildren(...people.map((h, i) => el("div", { class: "preview-row" },
+        el("span", { text: h === session.me.handle ? `${h} (you)` : h }),
+        el("span", { class: "money", testid: `split-share-${h}`, text: money(shares[i]) }))));
+    }
+    form.addEventListener("input", renderPreview);
+    const keyFor = keyedForm(form);
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      clearMessage("split-error");
+      const minor = parseAmount(amount.value);
+      const people = parseHandles(handles.value);
+      if (minor === null || !people.length) {
+        showMessage(form, "split-error", "state-refused", minor === null
+          ? `Enter an amount like ${decimalText(15 * 10 ** session.me.minor_units, session.me.minor_units)}, with at most ${session.me.minor_units} decimal places.`
+          : "Add at least one handle.");
+        return;
+      }
+      busy(submit, true);
+      const res = await api("POST", "/splits", { amount: minor, participant_handles: people, note: note.value }, keyFor());
+      busy(submit, false);
+      if (res.kind !== "ok") {
+        showMessage(form, "split-error", res.kind === "refused" ? "state-refused" : "state-uncertain",
+          res.kind === "refused"
+            ? (res.error.code === "validation_failed" ? "Check the amount and use each handle only once." : refusalText(res.error))
+            : "We couldn't confirm this split. Press Send requests again to retry safely.");
+        return;
+      }
+      const asked = res.data.requests.map(r => r.payer_handle);
+      result.replaceChildren(el("p", { class: "notice state-success", role: "status",
+        text: asked.length ? `Requests sent to ${asked.join(", ")}. Track them on the Requests page.`
+          : "Split recorded. There was no one else to ask." }));
+    });
+    renderPreview();
+    main().replaceChildren(
+      el("h1", { class: "page-title", text: "Split a bill" }),
+      el("p", { class: "lede", text: "You paid for something shared. We'll ask everyone else for their part — shares are equal, and any leftover cent goes to the first people listed." }),
+      el("section", { class: "card" }, form, result));
+  }
+
+  /* ---------- authorizations (holds) ---------- */
+
+  function authorizationItem(a, act) {
+    const id = a.authorization_id;
+    const incoming = a.to_user_id === session.me.user_id;
+    const open = a.status === "open";
+    const who = incoming ? `${a.from_handle} is holding money for you` : `You're holding money for ${a.to_handle}`;
+    const capture = open && incoming
+      ? el("input", { testid: `authorization-capture-amount-${id}`, inputmode: "decimal", autocomplete: "off",
+          value: decimalText(a.remaining_amount, session.me.minor_units), id: `cap-${id}` }) : null;
+    return el("li", { class: `item ${incoming ? "direction-in" : "direction-out"}`, testid: `authorization-item-${id}`,
+      "data-status": a.status },
+      el("div", { class: "item-main" },
+        el("div", { class: "item-title", text: who }),
+        el("div", { class: "item-note", text: a.note }),
+        el("div", { class: "item-meta" }, statusBadge(a.status),
+          open && a.remaining_amount !== a.amount ? el("span", { class: "state-held", text: `${money(a.remaining_amount)} still held` }) : null,
+          a.status === "captured" ? el("span", null, "Captured ",
+            el("span", { testid: `authorization-captured-${id}`, text: money(a.captured_amount) })) : null,
+          el("span", null, `${open ? "Expires" : "Expiry"} ${when(a.expires_at)} · `,
+            el("time", { datetime: a.expires_at, testid: `authorization-expires-${id}`, text: a.expires_at })),
+          el("span", { class: "badge muted", text: a.visibility === "private" ? "Private" : "Public" }))),
+      el("div", { class: "item-amount", testid: `authorization-amount-${id}`, text: money(a.amount) }),
+      open ? el("div", { class: "item-actions" }, incoming
+        ? el("div", { class: "capture-row" },
+            el("div", { class: "field" }, el("label", { for: `cap-${id}`, text: "Amount to collect" }), capture),
+            el("button", { class: "btn btn-primary btn-small", type: "button", testid: `authorization-capture-${id}`,
+              text: "Collect", onclick: e => act(e.currentTarget, "capture", a, capture) }))
+        : el("button", { class: "btn btn-danger btn-small", type: "button", testid: `authorization-void-${id}`,
+            text: "Release hold", onclick: e => act(e.currentTarget, "void", a) })) : null);
+  }
+
+  async function authorizationsScreen() {
+    const banner = el("div");
+    const listSlot = el("div");
+    let loadSeq = 0;
+    async function load() {
+      const seq = ++loadSeq;
+      const res = await api("GET", "/authorizations?limit=200");
+      if (seq !== loadSeq) return;
+      if (res.kind !== "ok") {
+        listSlot.replaceChildren(el("p", { class: "notice state-uncertain", role: "alert",
+          text: "We couldn't load your holds. Try again in a moment." }));
+        return;
+      }
+      const items = res.data.authorizations;
+      listSlot.replaceChildren(items.length
+        ? el("ul", { class: "list", testid: "authorization-list" }, items.map(a => authorizationItem(a, act)))
+        : el("p", { class: "empty", testid: "empty-authorizations",
+            text: "No holds yet. Place one from your wallet to reserve money for someone." }));
+    }
+    async function act(button, action, a, input) {
+      clearMessage("authorization-error");
+      const id = a.authorization_id;
+      let result;
+      if (action === "capture") {
+        const minor = parseAmount(input.value);
+        if (minor === null) {
+          showMessage(banner, "authorization-error", "state-refused",
+            `Enter an amount like ${decimalText(a.remaining_amount, session.me.minor_units)}, with at most ${session.me.minor_units} decimal places.`);
+          return;
+        }
+        busy(button, true);
+        result = await api("POST", `/authorizations/${encodeURIComponent(id)}/capture`, { amount: minor },
+          actionKey(`capture:${id}:${minor}`));
+      } else {
+        busy(button, true);
+        result = await api("POST", `/authorizations/${encodeURIComponent(id)}/void`);
+      }
+      busy(button, false);
+      if (result.kind === "ok") {
+        flash(banner, action === "capture" ? `Collected ${money(result.data.amount)} from ${result.data.from_handle}.`
+          : "Hold released. The money is available again.");
+      } else {
+        showMessage(banner, "authorization-error", result.kind === "refused" ? "state-refused" : "state-uncertain",
+          result.kind === "refused" ? refusalText(result.error)
+            : "We couldn't confirm that. Press the button again to retry safely.");
+      }
+      await load();
+    }
+    main().replaceChildren(
+      el("h1", { class: "page-title", text: "Holds" }),
+      el("p", { class: "lede", text: "Money reserved for someone to collect later. Holds release automatically when they expire." }),
+      banner, el("section", { class: "card" }, listSlot));
+    listSlot.append(el("p", { class: "state-loading loading-line", role: "status", text: "Loading holds…" }));
+    await load();
+  }
+
   /* ---------- boot ---------- */
 
-  const SCREENS = { wallet: walletScreen };
+  const SCREENS = { wallet: walletScreen, requests: requestsScreen, split: splitScreen,
+    authorizations: authorizationsScreen };
 
   async function boot() {
     const screen = document.body.dataset.screen;
